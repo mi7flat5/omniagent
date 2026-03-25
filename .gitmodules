@@ -1,0 +1,6 @@
+[submodule "omniagent-core"]
+	path = omniagent-core
+	url = https://github.com/mi7flat5/omniagent-core.git
+[submodule "omniagent-web"]
+	path = omniagent-web
+	url = https://github.com/mi7flat5/omniagent-web.git
