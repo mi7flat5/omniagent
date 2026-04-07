@@ -1,0 +1,20 @@
+{
+  "llm": {
+    "provider": "openai",
+    "base_url": "http://192.168.1.84:8999/v1/",
+    "model": "qwen3-coder-next:cloud",
+    "api_key": "",
+    "max_tokens": 32768,
+    "temperature": 0.6,
+    "enable_thinking": false
+  },
+  "orchestrator_llm": {
+    "provider": "openai",
+    "base_url": "http://192.168.1.84:8999/v1/",
+    "model": "qwen3-coder-next:cloud",
+    "api_key": "",
+    "max_tokens": 32768,
+    "temperature": 0.6,
+    "enable_thinking": false
+  }
+}

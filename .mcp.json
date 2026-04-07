@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "codebase-search": {
+      "command": "python",
+      "args": ["tools/codebase_search.py"],
+      "env": {
+        "QDRANT_URL": "http://192.168.1.84:6333",
+        "OLLAMA_URL": "http://172.19.192.1:11434",
+        "OLLAMA_MODEL": "nomic-embed-text",
+        "COLLECTION": "omniagent_repo"
+      }
+    }
+  }
+}

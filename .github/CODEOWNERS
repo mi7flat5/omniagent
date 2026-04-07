@@ -1,0 +1,26 @@
+# OmniAgent CODEOWNERS
+# Defines code owners for security-critical and core components
+# Format: path_pattern owner1 owner2 ...
+
+# Security-critical components
+/src/sandbox/ @mi7flat5
+/src/permissions/ @mi7flat5
+/src/server/auth* @mi7flat5
+/src/server/key_vault* @mi7flat5
+/src/tools/bash_tool* @mi7flat5
+
+# Core architecture
+/src/agent/orchestrator* @mi7flat5
+/src/agent/base_agent* @mi7flat5
+/src/llm/ @mi7flat5
+
+# Build system
+/CMakeLists.txt @mi7flat5
+/src/CMakeLists.txt @mi7flat5
+
+# Web frontend
+/omniagent-web/src/ @mi7flat5
+
+# Documentation
+/docs/ @mi7flat5
+*.md @mi7flat5

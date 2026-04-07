@@ -1,0 +1,35 @@
+# Planner harness configs with API keys/secrets
+planner-harness/config.yaml
+planner-harness/.env
+planner-harness/**/*.env
+
+# Session data (auto-generated, contains tokens/secrets)
+.omniagent/sessions/
+
+# Local documentation drafts (keep docs/ for published docs)
+HANDOFF_NEXT_SESSION.md
+IMPLEMENTATION_SUMMARY.md
+REMEDIATION_PLAN.md
+REMEDIATION_STATUS.md
+
+# Session data (local development artifacts)
+.omniagent/sessions/
+
+# Test configs with secrets
+**/test/config.yaml
+**/test/*.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Build outputs
+build/
+dist/

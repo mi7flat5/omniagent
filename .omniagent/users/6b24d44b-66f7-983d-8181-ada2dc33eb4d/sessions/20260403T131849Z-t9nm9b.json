@@ -1,0 +1,23 @@
+{
+  "created_at": 1775222329,
+  "id": "20260403T131849Z-t9nm9b",
+  "messages": [
+    {
+      "content": "can you audit code for bufs and logic errors",
+      "role": "user",
+      "tool_calls": []
+    }
+  ],
+  "model": "",
+  "name": "can you audit code for bufs and logic errors",
+  "project_id": "60f0fdc64cf19359",
+  "total_usage": {
+    "cached_tokens": 0,
+    "completion_tokens": 0,
+    "prompt_tokens": 0,
+    "total_tokens": 0
+  },
+  "updated_at": 1775222348,
+  "user_id": "6b24d44b-66f7-983d-8181-ada2dc33eb4d",
+  "workspace_path": "/home/mi7fl/projects/taskpipe"
+}

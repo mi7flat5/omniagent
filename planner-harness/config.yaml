@@ -1,0 +1,70 @@
+models:
+  # Remote machine (192.168.1.84)
+  qwen3.5:
+    endpoint: http://192.168.1.84:11434/v1
+    model: qwen3.5:cloud
+    api_key: ollama
+    max_tokens: 16384
+    temperature: 0.0
+
+  qwen3-coder-next:
+    endpoint: http://192.168.1.84:11434/v1
+    model: qwen3-coder-next:cloud
+    api_key: ollama
+    max_tokens: 16384
+    temperature: 0.0
+
+  minimax-m2.5:
+    endpoint: http://192.168.1.84:11434/v1
+    model: minimax-m2.5:cloud
+    api_key: ollama
+    max_tokens: 16384
+    temperature: 0.0
+
+  minimax-m2.7:
+    endpoint: http://192.168.1.84:11434/v1
+    model: minimax-m2.7:cloud
+    api_key: ollama
+    max_tokens: 16384
+    temperature: 0.0
+
+  # Windows host (172.19.192.1) — cloud models
+  glm-5:
+    endpoint: http://172.19.192.1:11434/v1
+    model: glm-5:cloud
+    api_key: ollama
+    max_tokens: 16384
+    temperature: 0.0
+
+  glm-4.7:
+    endpoint: http://172.19.192.1:11434/v1
+    model: glm-4.7:cloud
+    api_key: ollama
+    max_tokens: 16384
+    temperature: 0.0
+
+  deepseek-v3.2:
+    endpoint: http://172.19.192.1:11434/v1
+    model: deepseek-v3.2:cloud
+    api_key: ollama
+    max_tokens: 16384
+    temperature: 0.0
+
+  kimi-k2.5:
+    endpoint: http://172.19.192.1:11434/v1
+    model: kimi-k2.5:cloud
+    api_key: ollama
+    max_tokens: 16384
+    temperature: 0.0
+
+  # Local llama.cpp
+  opus5-5:
+    endpoint: http://192.168.1.84:8999/v1
+    model: opus5_5.gguf
+    api_key: none
+    max_tokens: 65536
+    temperature: 0.0
+
+defaults:
+  adversary_model: qwen3.5
+  planner_model: qwen3.5

@@ -1,0 +1,17 @@
+{
+  "created_at": 1775485589,
+  "id": "20260406T142629Z-77za1v",
+  "messages": [],
+  "model": "",
+  "name": "Session 20260406T142629Z-77za1v",
+  "project_id": "3a478ebfa3cb1e9d",
+  "total_usage": {
+    "cached_tokens": 0,
+    "completion_tokens": 0,
+    "prompt_tokens": 0,
+    "total_tokens": 0
+  },
+  "updated_at": 1775485589,
+  "user_id": "6b24d44b-66f7-983d-8181-ada2dc33eb4d",
+  "workspace_path": "/home/mi7fl/projects/confctl"
+}
