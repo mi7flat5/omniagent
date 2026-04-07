@@ -184,6 +184,29 @@ void ProjectSession::reset() {
     session_state->session->persist();
 }
 
+std::size_t ProjectSession::rewind_messages(std::size_t count) {
+    if (count == 0) {
+        return 0;
+    }
+
+    auto session_state = impl_->state;
+    std::lock_guard<std::mutex> session_lock(session_state->mutex);
+    if (session_state->active_run) {
+        throw std::runtime_error("cannot rewind while a run is active");
+    }
+
+    auto messages = session_state->session->messages();
+    const std::size_t removable = std::min(count, messages.size());
+    if (removable == 0) {
+        return 0;
+    }
+
+    messages.resize(messages.size() - removable);
+    session_state->session->resume(messages);
+    session_state->session->persist();
+    return removable;
+}
+
 void ProjectSession::close() {
     auto session_state = impl_->state;
 

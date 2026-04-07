@@ -11,10 +11,11 @@ def validate_plan(spec_text: str, plan_json: dict) -> StageResult:
     result = StageResult()
     result.rubric_checks = [
         check_spec_sections_present(files),
-        check_test_coverage(files),
+        check_test_coverage(files, spec_text),
         check_test_depends_on(files),
         check_no_circular_deps(files),
         check_phase_ordering(plan_json),
+        check_depends_on_references(plan_json),
         check_spec_section_consistency(files),
         check_no_duplicate_paths(files),
         check_spec_section_nontrivial(files),
@@ -55,31 +56,87 @@ def check_spec_sections_present(files: list[dict]) -> CheckResult:
                        f"{len(missing)} files missing: {', '.join(missing[:5])}")
 
 
-def check_test_coverage(files: list[dict]) -> CheckResult:
-    """Every source file has a corresponding test file."""
-    source_files = [f["path"] for f in files if not f["test"]]
+def _test_stems_for_source(source_path: str) -> list[str]:
+    """Generate likely test filename stems for a source path."""
+    filename = source_path.split("/")[-1].rsplit(".", 1)[0]
+    if filename == "__init__":
+        parts = source_path.replace("\\", "/").split("/")
+        parent = parts[-2] if len(parts) >= 2 else "__init__"
+        return [f"{parent}_init", f"test_{parent}_init", f"{parent}___init__"]
+
+    stems = [filename]
+    parts = source_path.replace("\\", "/").split("/")
+    if len(parts) >= 2:
+        stems.append(f"{parts[-2]}_{filename}")
+    return stems
+
+
+def _direct_test_coverage(files: list[dict]) -> set[str]:
+    """Find sources covered by direct test filename matching."""
     test_files = [f["path"] for f in files if f["test"]]
+    covered = set()
+    for source in files:
+        if source["test"]:
+            continue
+        stems = _test_stems_for_source(source["path"])
+        if any(
+            any(f"test_{stem}" in test_path or f"{stem}_test" in test_path for stem in stems)
+            for test_path in test_files
+        ):
+            covered.add(source["path"])
+    return covered
+
+
+def _transitive_test_coverage(files: list[dict]) -> set[str]:
+    """Find sources covered through transitive test dependencies."""
+    path_to_entry = {f["path"]: f for f in files}
+    covered = set()
+    visited = set()
+    stack = [f["path"] for f in files if f["test"]]
+
+    while stack:
+        current = stack.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        entry = path_to_entry.get(current)
+        if not entry:
+            continue
+        for dep in entry["depends_on"]:
+            dep_entry = path_to_entry.get(dep)
+            if not dep_entry:
+                continue
+            if not dep_entry["test"]:
+                covered.add(dep)
+            stack.append(dep)
+
+    return covered
+
+
+def _is_coverage_exempt(source_path: str, spec_text: str) -> bool:
+    """Honor explicit spec directives that scope test coverage."""
+    normalized = spec_text.lower()
+    if source_path.startswith("frontend/"):
+        if "no test files specified for frontend" in normalized:
+            return True
+        if "focus on backend tests" in normalized:
+            return True
+        if "backend-only test coverage" in normalized:
+            return True
+    return False
+
+
+def check_test_coverage(files: list[dict], spec_text: str = "") -> CheckResult:
+    """Every required source file is covered by a direct or transitive test path."""
+    covered = _direct_test_coverage(files) | _transitive_test_coverage(files)
     uncovered = []
-    for src in source_files:
-        filename = src.split("/")[-1].replace(".py", "")
-        # For __init__.py, use the parent package name (e.g. sci_calc/utils/__init__.py -> utils_init)
-        if filename == "__init__":
-            parts = src.replace("\\", "/").split("/")
-            parent = parts[-2] if len(parts) >= 2 else "__init__"
-            stems = [f"{parent}_init", f"test_{parent}_init", f"{parent}___init__"]
-        else:
-            stems = [filename]
-            # Also add package-prefixed stems (e.g., pyql/lexer.py -> pyql_lexer)
-            parts = src.replace("\\", "/").split("/")
-            if len(parts) >= 2:
-                pkg = parts[-2]
-                stems.append(f"{pkg}_{filename}")
-        has_test = any(
-            any(f"test_{s}" in t or f"{s}_test" in t for s in stems)
-            for t in test_files
-        )
-        if not has_test:
-            uncovered.append(src)
+    for source in files:
+        if source["test"]:
+            continue
+        if _is_coverage_exempt(source["path"], spec_text):
+            continue
+        if source["path"] not in covered:
+            uncovered.append(source["path"])
     if not uncovered:
         return CheckResult("Test coverage", 5, True)
     return CheckResult("Test coverage", 5, False,
@@ -157,6 +214,36 @@ def check_phase_ordering(plan_json: dict) -> CheckResult:
         return CheckResult("Phase ordering valid", 5, True)
     return CheckResult("Phase ordering valid", 5, False,
                        f"{len(violations)} violations: {violations[0]}")
+
+
+def check_depends_on_references(plan_json: dict) -> CheckResult:
+    """Every depends_on entry resolves to a known file path or phase/group name."""
+    known_files = set()
+    known_phase_names = set()
+
+    for phase in plan_json.get("phases", []):
+        phase_name = phase.get("name")
+        if isinstance(phase_name, str) and phase_name:
+            known_phase_names.add(phase_name)
+        for entry in phase.get("files", phase.get("tasks", [])):
+            path = entry.get("path", entry.get("file", ""))
+            if isinstance(path, str) and path:
+                known_files.add(path)
+
+    issues = []
+    for phase in plan_json.get("phases", []):
+        for entry in phase.get("files", phase.get("tasks", [])):
+            path = entry.get("path", entry.get("file", ""))
+            for dep in entry.get("depends_on", []):
+                if not isinstance(dep, str) or not dep:
+                    continue
+                if dep not in known_files and dep not in known_phase_names:
+                    issues.append(f"{path} depends_on unknown file or group '{dep}'")
+
+    if not issues:
+        return CheckResult("Dependency references valid", 5, True)
+    return CheckResult("Dependency references valid", 5, False,
+                       f"{len(issues)} invalid references: {issues[0]}")
 
 
 def check_spec_section_consistency(files: list[dict]) -> CheckResult:
@@ -263,6 +350,23 @@ def _parent_module_paths(file_path: str) -> list[str]:
     return result
 
 
+def _top_level_defined_classes(spec_section: str) -> set[str]:
+    """Collect top-level class names and ignore nested helper classes.
+
+    Nested classes such as Pydantic ``class Config`` blocks are implementation
+    details inside another class body and should not be treated as exported
+    cross-file types.
+    """
+    classes = set()
+    for line in spec_section.splitlines():
+        if not line or line[0].isspace():
+            continue
+        match = re.match(r"class\s+(\w+)", line)
+        if match and not match.group(1).startswith("_"):
+            classes.add(match.group(1))
+    return classes
+
+
 def check_import_completeness(files: list[dict]) -> CheckResult:
     """Spec_sections that reference types from other files must include import statements.
 
@@ -277,11 +381,8 @@ def check_import_completeness(files: list[dict]) -> CheckResult:
         if f["test"]:
             continue
         ss = f["spec_section"]
-        # Find class and enum definitions
-        for match in re.finditer(r"class\s+(\w+)", ss):
-            name = match.group(1)
-            if not name.startswith("_"):
-                type_to_file[name] = f["path"]
+        for name in _top_level_defined_classes(ss):
+            type_to_file[name] = f["path"]
         # Find top-level type aliases / enum-like names (e.g., TaskStatus)
         # These are often dataclasses or enums referenced as type hints elsewhere
 

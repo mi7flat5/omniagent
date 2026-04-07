@@ -2,6 +2,7 @@
 
 #include <omni/provider.h>
 #include <string>
+#include <unordered_set>
 
 namespace omni::engine {
 
@@ -35,6 +36,7 @@ private:
                         bool& thinking_started,
                         bool& thinking_open,
                         bool& text_started,
+                        std::unordered_set<int>& open_tool_blocks,
                         Usage& usage) const;
 };
 

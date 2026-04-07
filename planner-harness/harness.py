@@ -16,27 +16,27 @@ from pipeline import (
 
 
 def cmd_generate_prompt(args, config):
-    model = resolve_model(config, args.model)
+    model = resolve_model(config, args.model, purpose="generation")
     generate_prompt(args.spec, config, model, args.output)
 
 
 def cmd_validate_spec(args, config):
-    model = resolve_model(config, args.model)
+    model = resolve_model(config, args.model, purpose="adversary")
     validate_spec_pipeline(args.spec, config, model)
 
 
 def cmd_generate_plan(args, config):
-    model = resolve_model(config, args.model)
+    model = resolve_model(config, args.model, purpose="generation")
     generate_plan(args.spec, args.prompt, config, model, args.output)
 
 
 def cmd_validate_plan(args, config):
-    model = resolve_model(config, args.model)
+    model = resolve_model(config, args.model, purpose="adversary")
     validate_plan_pipeline(args.spec, args.plan, config, model)
 
 
 def cmd_run(args, config):
-    model = resolve_model(config, args.model)
+    model = resolve_model(config, args.model, purpose="generation")
     full_pipeline(args.spec, args.prompt, config, model)
 
 

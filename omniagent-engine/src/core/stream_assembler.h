@@ -23,6 +23,7 @@ private:
         std::string    text;       // accumulated text
         std::string    tool_id;
         std::string    tool_name;
+        std::string    tool_input_json_text;
         nlohmann::json tool_input;
     };
 

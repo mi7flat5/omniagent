@@ -1,0 +1,31 @@
+{
+  "generated_at": "2026-04-07T22:22:29.850992+00:00",
+  "models": [
+    {
+      "model": "opus5-5",
+      "runs": 1,
+      "workflow_passes": 0,
+      "workflow_pass_rate": 0.0,
+      "spec_passes": 0,
+      "plan_passes": 0,
+      "median_elapsed_ms": null,
+      "average_repair_attempts": null,
+      "timeouts": 0,
+      "nonzero_exit_codes": 0
+    }
+  ],
+  "runs": [
+    {
+      "model": "opus5-5",
+      "run_index": 1,
+      "run_dir": "/home/mi7fl/omniagent/tmp/e2e-benchmarks/build-from-idea-20260407-222229/opus5-5-run-01",
+      "return_code": 0,
+      "timed_out": false,
+      "workflow_passed": false,
+      "spec_passed": false,
+      "plan_passed": false,
+      "repair_attempts": 0,
+      "elapsed_ms": null
+    }
+  ]
+}

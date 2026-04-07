@@ -1,0 +1,160 @@
+{
+  "phases": [
+    {
+      "phase": 0,
+      "name": "Foundation Phase",
+      "tasks": [
+        {
+          "file": "exceptions.py",
+          "description": "Defines custom exception classes for the application.",
+          "spec_section": "Implement `exceptions.py` by defining the following custom exception classes: 1. `InvalidSignatureError(Exception)` 2. `IdempotencyConflictError(Exception)` 3. `TargetDeliveryError(Exception)` 4. `ProviderNotFoundError(Exception)`. These will be used throughout the service to handle specific error states.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_exceptions.py",
+          "description": "Unit tests for custom exceptions.",
+          "spec_section": "Test the custom exceptions in `exceptions.py`. 1. Verify that `InvalidSignatureError`, `IdempotencyConflictError`, `TargetDeliveryError`, and `ProviderNotFoundError` can be raised and caught correctly. Required imports: `import pytest`, `from exceptions import InvalidSignatureError, IdempotencyConflictError, TargetDeliveryError, ProviderNotFoundError`.",
+          "depends_on": [
+            "exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "models.py",
+          "description": "SQLAlchemy models for Event and Provider.",
+          "spec_section": "Implement `models.py` using SQLAlchemy. 1. Define `EventStatus` Enum with values: `PENDING`, `DELIVERED`, `FAILED`. 2. Define `Base = declarative_base()`. 3. Define `Provider` model: `id` (Integer, PK), `name` (String, unique), `secret` (String). 4. Define `Event` model: `id` (String, PK), `provider_name` (String), `payload` (JSON), `target_url` (String), `headers` (JSON), `status` (Enum: EventStatus), `retry_count` (Integer, default 0), `idempotency_key` (String, unique), `created_at` (DateTime). Required imports: `from sqlalchemy import Column, Integer, String, JSON, Enum, DateTime`, `from sqlalchemy.ext.declarative import declarative_base`, `import enum`.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_models.py",
+          "description": "Unit tests for SQLAlchemy models.",
+          "spec_section": "Test the `Event` and `Provider` models in `models.py`. 1. Verify that an `Event` can be instantiated with all required fields. 2. Verify that `EventStatus` enum values are correct. Required imports: `import pytest`, `from models import Event, EventStatus, Provider`.",
+          "depends_on": [
+            "models.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 1,
+      "name": "Core Logic & Infrastructure Phase",
+      "tasks": [
+        {
+          "file": "schemas.py",
+          "description": "Pydantic schemas for request/response validation.",
+          "spec_section": "Implement `schemas.py` using Pydantic. 1. Define `WebhookPayload` schema for the incoming JSON body. 2. Define `EventResponse` schema for returning event details. Required imports: `from pydantic import BaseModel`, `from typing import Any, Dict`.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_schemas.py",
+          "description": "Unit tests for Pydantic schemas.",
+          "spec_section": "Test the Pydantic schemas in `schemas.py`. 1. Verify that `WebhookPayload` correctly validates valid and invalid JSON inputs. 2. Verify that `EventResponse` correctly serializes model data. Required imports: `import pytest`, `from schemas import WebhookPayload, EventResponse`.",
+          "depends_on": [
+            "schemas.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "security.py",
+          "description": "HMAC signature verification logic.",
+          "spec_section": "Implement `security.py` with `def verify_hmac_signature(payload: bytes, signature: str, secret: str) -> bool:`. The function must: 1. Use `hmac` and `hashlib.sha256` to compute `expected_signature` from `secret` and `payload`. 2. Use `hmac.compare_digest` to compare `expected_signature` and `signature`. 3. Raise `exceptions.InvalidSignatureError` if they don't match. 4. Raise `ValueError` if `secret` is empty. Required imports: `import hmac`, `import hashlib`, `from exceptions import InvalidSignatureError`.",
+          "depends_on": [
+            "exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_security.py",
+          "description": "Unit tests for HMAC verification.",
+          "spec_section": "Test the `verify_hmac_signature` function in `security.py`. 1. `test_verify_hmac_signature_success`: Verify that a valid HMAC-SHA256 signature returns `True`. 2. `test_verify_hmac_signature_failure`: Verify that an incorrect signature raises `exceptions.InvalidSignatureError`. 3. `test_verify_hmac_signature_empty_secret`: Verify that an empty secret raises `ValueError`. Required imports: `import pytest`, `from security import verify_hmac_signature`, `from exceptions import InvalidSignatureError`.",
+          "depends_on": [
+            "security.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "database.py",
+          "description": "SQLAlchemy engine and session configuration.",
+          "spec_section": "Implement `database.py` for SQLAlchemy setup. 1. Create `engine` using `create_engine` with a PostgreSQL connection string. 2. Create `SessionLocal` using `sessionmaker(bind=engine)`. Required imports: `from sqlalchemy import create_engine`, `from sqlalchemy.orm import sessionmaker`.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_database.py",
+          "description": "Unit tests for database connectivity.",
+          "spec_section": "Test the database configuration in `database.py`. 1. Verify that `SessionLocal` can be instantiated and produces a session object. Required imports: `import pytest`, `from database import SessionLocal`.",
+          "depends_on": [
+            "database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Application & Worker Phase",
+      "tasks": [
+        {
+          "file": "worker.py",
+          "description": "Asynchronous retry logic and delivery worker.",
+          "spec_section": "Implement `worker.py` with `async def execute_retry_logic(event_id: str, attempt: int) -> None:`. The function must: 1. Fetch `models.Event` using `database.SessionLocal`. 2. Calculate delay: `2 ** attempt` seconds. 3. Use `httpx.AsyncClient` to POST `event.payload` to `event.target_url` with `event.headers`. 4. If status is 2xx, set `event.status = models.EventStatus.DELIVERED`. 5. If status is not 2xx, raise `exceptions.TargetDeliveryError`. 6. On exception: if `attempt < 5`, schedule next attempt via `asyncio.create_task(execute_retry_logic(event_id, attempt + 1))`. Else, set `event.status = models.EventStatus.FAILED`. 7. Commit and close session. Required imports: `import asyncio`, `import httpx`, `from datetime import datetime`, `from models import Event, EventStatus`, `from database import SessionLocal`, `from exceptions import TargetDeliveryError`.",
+          "depends_on": [
+            "models.py",
+            "database.py",
+            "exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_worker.py",
+          "description": "Unit tests for the retry worker.",
+          "spec_section": "Test the `execute_retry_logic` function in `worker.py`. 1. `test_retry_success`: Mock `httpx.AsyncClient` to return 200 and verify `models.Event.status` becomes `models.EventStatus.DELIVERED`. 2. `test_retry_failure_and_backoff`: Mock `httpx.AsyncClient` to return 500 and verify the function schedules a new task with `attempt + 1`. 3. `test_retry_exhaustion`: Mock `httpx.AsyncClient` to return 500 and verify that after 5 attempts, `models.Event.status` becomes `models.EventStatus.FAILED`. Required imports: `import pytest`, `from unittest.mock import patch, AsyncMock`, `from worker import execute_retry_logic`, `from models import Event, EventStatus`, `from database import SessionLocal`.",
+          "depends_on": [
+            "worker.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "main.py",
+          "description": "FastAPI application and API endpoints.",
+          "spec_section": "Implement the FastAPI application in `main.py`. The app must include: 1. `POST /webhook/{provider}`: Ingests webhooks. Requires `X-Signature` and `X-Idempotency-Key` headers. Uses `security.verify_hmac_signature` to validate. Uses `models.Event` to store payload. Returns 409 if `models.Event` with same idempotency key exists. 2. `POST /admin/replay/{event_id}`: Resets `event.retry_count` to 0 and `event.status` to `models.EventStatus.PENDING`. 3. `GET /admin/dlq`: Returns list of events where `event.status == models.EventStatus.FAILED`. Required imports: `from fastapi import FastAPI, Header, HTTPException, Depends`, `from sqlalchemy.orm import Session`, `from models import Event, EventStatus`, `from database import SessionLocal`, `from security import verify_hmac_signature`, `from exceptions import InvalidSignatureError, IdempotencyConflictError, ProviderNotFoundError`.",
+          "depends_on": [
+            "models.py",
+            "schemas.py",
+            "security.py",
+            "database.py",
+            "exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_api.py",
+          "description": "Integration tests for the API endpoints.",
+          "spec_section": "Perform integration testing for the FastAPI application in `main.py`. 1. `test_webhook_ingestion_flow`: Send a valid `POST /webhook/{provider}` request and verify the database contains a new `models.Event` record with status `models.EventStatus.PENDING`. 2. `test_idempotency_enforcement`: Send two identical requests with the same `X-Idempotency-Key` and verify the second request returns `409 Conflict`. 3. `test_signature_validation`: Send a request with an invalid `X-Signature` and verify it returns `401 Unauthorized`. 4. `test_admin_replay`: Call `POST /admin/replay/{event_id}` and verify the event status resets to `PENDING`. 5. `test_admin_dlq`: Call `GET /admin/dlq` and verify it returns only `FAILED` events. Required imports: `import pytest`, `from httpx import ASGITransport, AsyncClient`, `from main import app`, `from database import SessionLocal`, `from models import Event, EventStatus`.",
+          "depends_on": [
+            "main.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    }
+  ]
+}

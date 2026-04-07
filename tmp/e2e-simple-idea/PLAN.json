@@ -1,0 +1,112 @@
+{
+  "phases": [
+    {
+      "phase": 0,
+      "name": "Phase 1: Core Infrastructure and Tests",
+      "tasks": [
+        {
+          "file": "src/todo_app/exceptions.py",
+          "description": "Define custom exception classes for the application error handling.",
+          "spec_section": "class TodoItemNotFoundError(Exception):\n    \"\"\"Raised when a todo item with the given ID is not found.\"\"\"\n    pass\n\nclass TodoStorageError(Exception):\n    \"\"\"Raised when a storage operation fails.\"\"\"\n    pass",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_exceptions.py",
+          "description": "Unit tests for custom exception classes.",
+          "spec_section": "from todo_app.exceptions import TodoItemNotFoundError, TodoStorageError\n\ndef test_TodoItemNotFoundError_is_exception(): assert issubclass(TodoItemNotFoundError, Exception)\ndef test_TodoStorageError_is_exception(): assert issubclass(TodoStorageError, Exception)\ndef test_TodoItemNotFoundError_can_raise(): raise TodoItemNotFoundError('test')\ndef test_TodoStorageError_can_raise(): raise TodoStorageError('test')",
+          "depends_on": [
+            "src/todo_app/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/todo_app/storage.py",
+          "description": "Implement JSON file storage logic for loading and saving todos.",
+          "spec_section": "import json\nfrom pathlib import Path\nfrom typing import List, Dict, Any\n\nDEFAULT_STORAGE_PATH: Path = Path('data/todos.json')\n\ndef load_todos(file_path: Path = DEFAULT_STORAGE_PATH) -> List[Dict[str, Any]]:\n    if not file_path.exists(): return []\n    with open(file_path, 'r', encoding='utf-8') as f:\n        data = json.loads(f.read())\n        return data if isinstance(data, list) else []\n\ndef save_todos(todos: List[Dict[str, Any]], file_path: Path = DEFAULT_STORAGE_PATH) -> None:\n    file_path.parent.mkdir(parents=True, exist_ok=True)\n    with open(file_path, 'w', encoding='utf-8') as f:\n        json.dump(todos, f, indent=2)",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_storage.py",
+          "description": "Unit tests for storage functions load_todos and save_todos.",
+          "spec_section": "from todo_app.storage import load_todos, save_todos\nfrom pathlib import Path\nimport tempfile\n\ndef test_load_todos_missing_file_returns_empty(): assert load_todos(Path('nonexistent.json')) == []\ndef test_save_todos_creates_parent_directory(): with tempfile.TemporaryDirectory() as tmpdir: save_todos([], Path(tmpdir) / 'subdir' / 'todos.json')",
+          "depends_on": [
+            "src/todo_app/storage.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/__init__.py",
+          "description": "Initialize tests package.",
+          "spec_section": "# Tests package initialization\n# This file makes the tests directory a Python package",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_tests_init.py",
+          "description": "Unit tests for tests package initialization.",
+          "spec_section": "import tests\n\ndef test_tests_package_exists(): assert tests is not None\ndef test_tests_package_is_module(): import inspect; assert inspect.ismodule(tests)",
+          "depends_on": [
+            "tests/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 1,
+      "name": "Phase 2: Business Logic and Public API",
+      "tasks": [
+        {
+          "file": "src/todo_app/main.py",
+          "description": "Implement business logic for adding, listing, completing, and removing todos.",
+          "spec_section": "from typing import List, Dict, Any\nfrom todo_app.storage import load_todos, save_todos\nfrom todo_app.exceptions import TodoItemNotFoundError\n\ndef add_todo(title: str) -> int:\n    todos = load_todos()\n    new_id = max((item['id'] for item in todos), default=0) + 1\n    todos.append({'id': new_id, 'title': title, 'completed': False})\n    save_todos(todos)\n    return new_id\n\ndef list_todos() -> List[Dict[str, Any]]: return load_todos()\n\ndef complete_todo(todo_id: int) -> None:\n    todos = load_todos()\n    for item in todos:\n        if item['id'] == todo_id:\n            item['completed'] = True\n            save_todos(todos)\n            return\n    raise TodoItemNotFoundError(f'Todo item with ID {todo_id} not found')\n\ndef remove_todo(todo_id: int) -> None:\n    todos = load_todos()\n    initial_len = len(todos)\n    todos[:] = [item for item in todos if item['id'] != todo_id]\n    if len(todos) == initial_len:\n        raise TodoItemNotFoundError(f'Todo item with ID {todo_id} not found')\n    save_todos(todos)",
+          "depends_on": [
+            "src/todo_app/storage.py",
+            "src/todo_app/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_main.py",
+          "description": "Unit tests for main business logic functions.",
+          "spec_section": "from todo_app.main import add_todo, list_todos, complete_todo, remove_todo\nfrom todo_app.exceptions import TodoItemNotFoundError\n\ndef test_add_todo_returns_int_id(): assert isinstance(add_todo('test'), int)\ndef test_complete_todo_raises_for_invalid_id(): raises TodoItemNotFoundError when complete_todo(999)\ndef test_remove_todo_decreases_list_length(): initial = len(list_todos()); remove_todo(valid_id); assert len(list_todos()) == initial - 1",
+          "depends_on": [
+            "src/todo_app/main.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/todo_app/__init__.py",
+          "description": "Expose public API by re-exporting functions and exceptions from the todo_app package.",
+          "spec_section": "from todo_app.main import add_todo, list_todos, complete_todo, remove_todo\nfrom todo_app.exceptions import TodoItemNotFoundError, TodoStorageError\n\n__all__ = [\n    'add_todo',\n    'list_todos',\n    'complete_todo',\n    'remove_todo',\n    'TodoItemNotFoundError',\n    'TodoStorageError'\n]",
+          "depends_on": [
+            "src/todo_app/main.py",
+            "src/todo_app/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_todo_app_init.py",
+          "description": "Unit tests for public API exports in package init.",
+          "spec_section": "from todo_app import add_todo, list_todos, complete_todo, remove_todo, TodoItemNotFoundError, TodoStorageError\n\ndef test_add_todo_exported(): assert callable(add_todo)\ndef test_list_todos_exported(): assert callable(list_todos)\ndef test_complete_todo_exported(): assert callable(complete_todo)\ndef test_remove_todo_exported(): assert callable(remove_todo)\ndef test_TodoItemNotFoundError_exported(): assert issubclass(TodoItemNotFoundError, Exception)\ndef test_TodoStorageError_exported(): assert issubclass(TodoStorageError, Exception)",
+          "depends_on": [
+            "src/todo_app/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    }
+  ]
+}

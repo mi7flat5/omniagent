@@ -15,11 +15,20 @@ from validators.plan_adversary import run_adversary as plan_adversary
 console = Console()
 
 
-def resolve_model(config: dict, model_name: str | None) -> str:
+def resolve_model(config: dict, model_name: str | None, *, purpose: str = "generation") -> str:
     """Resolve model name from args or config defaults."""
     if model_name:
         return model_name
-    return config.get("defaults", {}).get("adversary_model", list(config["models"].keys())[0])
+    defaults = config.get("defaults", {})
+    if purpose == "generation" and defaults.get("planner_model"):
+        return defaults["planner_model"]
+    if purpose == "adversary" and defaults.get("adversary_model"):
+        return defaults["adversary_model"]
+    if defaults.get("planner_model"):
+        return defaults["planner_model"]
+    if defaults.get("adversary_model"):
+        return defaults["adversary_model"]
+    return list(config["models"].keys())[0]
 
 
 PROMPT_GENERATOR = Path(__file__).parent / "prompts" / "prompt_generator.md"

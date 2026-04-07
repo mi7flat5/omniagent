@@ -1,0 +1,121 @@
+{
+  "phases": [
+    {
+      "phase": 0,
+      "name": "Foundation: Models and Exceptions",
+      "tasks": [
+        {
+          "file": "src/todo_app/models.py",
+          "description": "Defines the Task data model.",
+          "spec_section": "The Task dataclass represents a single todo item. It must contain an integer id, a string description, and a boolean completed status. It is used by the TodoManager to store and manipulate tasks.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/todo_app/exceptions.py",
+          "description": "Defines custom exception classes.",
+          "spec_section": "Custom exception hierarchy for the application. Includes TodoError as the base class, TaskNotFoundError for missing IDs, and StorageError for JSON file I/O issues.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_models.py",
+          "description": "Unit tests for the Task model.",
+          "spec_section": "from todo_app.models import Task\n\nUnit tests for the Task dataclass. It should verify that a Task object can be instantiated with id, description, and completed fields and that the values are correctly assigned.",
+          "depends_on": [
+            "src/todo_app/models.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_exceptions.py",
+          "description": "Unit tests for the custom exceptions.",
+          "spec_section": "from todo_app.exceptions import TodoError, TaskNotFoundError, StorageError\n\nUnit tests for the exception classes. It should verify that TaskNotFoundError and StorageError are correctly recognized as subclasses of TodoError.",
+          "depends_on": [
+            "src/todo_app/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 1,
+      "name": "Core Logic: Task Management",
+      "tasks": [
+        {
+          "file": "src/todo_app/core.py",
+          "description": "Implements the TodoManager for task operations and persistence.",
+          "spec_section": "from todo_app.models import Task\nfrom todo_app.exceptions import TaskNotFoundError, StorageError\n\nThe TodoManager class handles the business logic. It includes methods: _load_tasks, _save_tasks, add_task, complete_task, and remove_task. It uses Task from todo_app.models and raises TaskNotFoundError or StorageError from todo_app.exceptions.",
+          "depends_on": [
+            "src/todo_app/models.py",
+            "src/todo_app/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_core.py",
+          "description": "Unit tests for the TodoManager.",
+          "spec_section": "from todo_app.core import TodoManager\nfrom todo_app.models import Task\nfrom todo_app.exceptions import TaskNotFoundError, StorageError\n\nUnit tests for TodoManager. It must test add_task (including empty description), complete_task (including non-existent IDs), and remove_task (including non-existent IDs). It should also verify persistence via _load_tasks and _save_tasks.",
+          "depends_on": [
+            "src/todo_app/core.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Interface: CLI and Package Exposure",
+      "tasks": [
+        {
+          "file": "src/todo_app/cli.py",
+          "description": "Implements the command-line interface.",
+          "spec_section": "from todo_app.core import TodoManager\n\nThe CLI entry point using argparse. It must implement a main function that parses commands: add, list, complete, and remove. It uses TodoManager from todo_app.core to execute the requested actions.",
+          "depends_on": [
+            "src/todo_app/core.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/todo_app/__init__.py",
+          "description": "Exposes core components at the package level.",
+          "spec_section": "from todo_app.models import Task\nfrom todo_app.core import TodoManager\nfrom todo_app.exceptions import TodoError, TaskNotFoundError, StorageError\n\nPackage initialization file. It must export Task from todo_app.models, TodoManager from todo_app.core, and TodoError, TaskNotFoundError, and StorageError from todo_app.exceptions for easy access.",
+          "depends_on": [
+            "src/todo_app/models.py",
+            "src/todo_app/core.py",
+            "src/todo_app/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_cli.py",
+          "description": "Unit tests for the CLI commands.",
+          "spec_section": "from todo_app.cli import main\n\nUnit tests for the CLI interface. It should mock sys.argv to test the add, list, complete, and remove commands, ensuring the correct TodoManager methods are called and errors are handled.",
+          "depends_on": [
+            "src/todo_app/cli.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_todo_app_init.py",
+          "description": "Unit tests for package exports.",
+          "spec_section": "from todo_app import Task, TodoManager, TodoError, TaskNotFoundError, StorageError\n\nUnit tests for the package __init__.py. It must verify that Task, TodoManager, TodoError, TaskNotFoundError, and StorageError are all accessible directly from the todo_app package.",
+          "depends_on": [
+            "src/todo_app/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    }
+  ]
+}

@@ -6,8 +6,10 @@ import pytest
 from validators.plan_rubric import (
     validate_plan,
     check_spec_sections_present,
+    check_test_coverage,
     check_no_circular_deps,
     check_phase_ordering,
+    check_depends_on_references,
     check_no_duplicate_paths,
     check_import_completeness,
     _extract_files,
@@ -60,6 +62,97 @@ def test_spec_sections_fail():
     assert not result.passed
 
 
+def test_test_coverage_allows_transitive_backend_coverage():
+    plan = {
+        "phases": [
+            {
+                "phase": 0,
+                "files": [
+                    {"path": "backend/domain/models.py", "spec_section": "class UserOut:\n    id: str", "depends_on": []},
+                ],
+            },
+            {
+                "phase": 1,
+                "files": [
+                    {
+                        "path": "backend/domain/auth_service.py",
+                        "spec_section": "from backend.domain.models import UserOut\n\ndef register_user() -> UserOut: ...",
+                        "depends_on": ["backend/domain/models.py"],
+                    },
+                ],
+            },
+            {
+                "phase": 2,
+                "files": [
+                    {
+                        "path": "tests/test_auth_api.py",
+                        "spec_section": "Test register_user through API.",
+                        "depends_on": ["backend/domain/auth_service.py"],
+                        "test": True,
+                    },
+                ],
+            },
+        ]
+    }
+    files = _extract_files(plan)
+    result = check_test_coverage(files, "backend-only test coverage")
+    assert result.passed
+
+
+def test_test_coverage_honors_frontend_exemption():
+    plan = {
+        "phases": [
+            {
+                "phase": 0,
+                "files": [
+                    {"path": "frontend/src/lib/api.ts", "spec_section": "export function apiFetch(): Promise<Response> { return fetch(''); }", "depends_on": []},
+                ],
+            },
+        ]
+    }
+    files = _extract_files(plan)
+    result = check_test_coverage(files, "No test files specified for frontend. Focus on backend tests.")
+    assert result.passed
+
+
+def test_import_completeness_ignores_nested_config_classes():
+    plan = {
+        "phases": [
+            {
+                "phase": 0,
+                "files": [
+                    {
+                        "path": "app/schemas/user.py",
+                        "spec_section": (
+                            "from pydantic import BaseModel\n\n"
+                            "class UserOut(BaseModel):\n"
+                            "    id: str\n"
+                            "    class Config:\n"
+                            "        from_attributes = True\n"
+                        ),
+                        "depends_on": [],
+                    },
+                    {
+                        "path": "app/schemas/meal_plan.py",
+                        "spec_section": (
+                            "from pydantic import BaseModel\n\n"
+                            "class MealPlanOut(BaseModel):\n"
+                            "    id: str\n"
+                            "    class Config:\n"
+                            "        from_attributes = True\n"
+                        ),
+                        "depends_on": [],
+                    },
+                ],
+            }
+        ]
+    }
+
+    files = _extract_files(plan)
+    result = check_import_completeness(files)
+    assert result.passed
+
+
 def test_no_circular_deps_pass():
     files = _extract_files(GOOD_PLAN)
     result = check_no_circular_deps(files)
@@ -88,6 +181,38 @@ def test_phase_ordering_fail():
     ]}
     result = check_phase_ordering(plan)
     assert not result.passed
+
+
+def test_depends_on_references_pass_for_files_and_phase_names():
+    plan = {"phases": [
+        {
+            "phase": 0,
+            "name": "Foundation",
+            "files": [{"path": "a.py", "spec_section": "def a(): pass", "depends_on": []}],
+        },
+        {
+            "phase": 1,
+            "name": "API",
+            "files": [{"path": "b.py", "spec_section": "def b(): pass", "depends_on": ["a.py", "Foundation"]}],
+        },
+    ]}
+
+    result = check_depends_on_references(plan)
+    assert result.passed
+
+
+def test_depends_on_references_fail_for_unknown_entries():
+    plan = {"phases": [
+        {
+            "phase": 0,
+            "name": "Foundation",
+            "files": [{"path": "a.py", "spec_section": "def a(): pass", "depends_on": ["missing.py"]}],
+        },
+    ]}
+
+    result = check_depends_on_references(plan)
+    assert not result.passed
+    assert "missing.py" in result.detail
 
 
 def test_no_duplicates():
@@ -121,4 +246,4 @@ def test_import_completeness_fail():
 
 def test_full_validate():
     result = validate_plan("spec text", GOOD_PLAN)
-    assert len(result.rubric_checks) == 10
+    assert len(result.rubric_checks) == 11

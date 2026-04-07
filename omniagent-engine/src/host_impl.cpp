@@ -239,7 +239,15 @@ PermissionDecision ForwardingPermissionDelegate::on_permission_request(
 ProjectEngineHost::ProjectEngineHost(std::shared_ptr<Impl> impl)
     : impl_(std::move(impl)) {}
 
-ProjectEngineHost::~ProjectEngineHost() = default;
+ProjectEngineHost::~ProjectEngineHost() {
+    if (!impl_) {
+        return;
+    }
+    try {
+        shutdown();
+    } catch (...) {
+    }
+}
 ProjectEngineHost::ProjectEngineHost(ProjectEngineHost&&) noexcept = default;
 ProjectEngineHost& ProjectEngineHost::operator=(ProjectEngineHost&&) noexcept = default;
 
@@ -321,6 +329,64 @@ std::unique_ptr<ProjectSession> ProjectEngineHost::resume_session(const std::str
     auto session = open_session(options);
     session->impl_->state->session->resume(record->messages);
     return session;
+}
+
+std::unique_ptr<ProjectSession> ProjectEngineHost::fork_session(const std::string& session_id,
+                                                                SessionOptions options) {
+    if (session_id.empty()) {
+        throw std::invalid_argument("source session id must not be empty");
+    }
+
+    auto host_state = impl_->state;
+    std::string source_profile = "explore";
+    std::filesystem::path source_working_dir = default_working_dir(host_state->config.workspace);
+    std::vector<Message> source_messages;
+
+    if (auto source_session = find_live_session(host_state, session_id)) {
+        std::lock_guard<std::mutex> session_lock(source_session->mutex);
+        if (source_session->closed) {
+            throw std::runtime_error("session is closed: " + session_id);
+        }
+        source_profile = source_session->active_profile;
+        source_working_dir = source_session->working_dir;
+        source_messages = source_session->session->messages();
+    } else {
+        if (!has_persistence(*host_state)) {
+            throw std::runtime_error("session not found: " + session_id);
+        }
+        SessionPersistence persistence = make_session_persistence(*host_state);
+        auto record = persistence.load(session_id);
+        if (!record) {
+            throw std::runtime_error("session not found: " + session_id);
+        }
+        source_messages = std::move(record->messages);
+    }
+
+    if (options.session_id.has_value()) {
+        const std::string& requested_id = *options.session_id;
+        if (requested_id.empty()) {
+            throw std::invalid_argument("fork session id must not be empty");
+        }
+        if (find_live_session(host_state, requested_id)) {
+            throw std::runtime_error("session id already exists: " + requested_id);
+        }
+        if (has_persistence(*host_state)) {
+            SessionPersistence persistence = make_session_persistence(*host_state);
+            if (persistence.load(requested_id).has_value()) {
+                throw std::runtime_error("session id already exists: " + requested_id);
+            }
+        }
+    }
+
+    options.profile = source_profile;
+    if (!options.working_dir_override.has_value()) {
+        options.working_dir_override = source_working_dir;
+    }
+
+    auto forked_session = open_session(std::move(options));
+    forked_session->impl_->state->session->resume(source_messages);
+    forked_session->impl_->state->session->persist();
+    return forked_session;
 }
 
 std::vector<SessionSummary> ProjectEngineHost::list_sessions() const {

@@ -16,8 +16,14 @@ WORKING_DIR="${ENGINE_WORKING_DIR:-${WORKSPACE_ROOT}}"
 PROJECT_ID="${ENGINE_PROJECT_ID:-$(basename "${WORKSPACE_ROOT}")}"
 STORAGE_DIR="${ENGINE_STORAGE_DIR:-${WORKSPACE_ROOT}/.omniagent/engine-cli}"
 BASE_URL="${ENGINE_BASE_URL:-http://192.168.1.84:8999/v1}"
-MODEL="${ENGINE_MODEL:-gemma-4-26B-A4B-it-UD-IQ3_XXS.gguf}"
-PROFILE="${ENGINE_PROFILE:-bugfix}"
+MODEL="${ENGINE_MODEL:-opus5_5.gguf}"
+PROFILE="${ENGINE_PROFILE:-coordinator}"
+API_KEY="${ENGINE_API_KEY:-}"
+APPROVAL_POLICY="${ENGINE_APPROVAL_POLICY:-}"
+
+if [[ -z "${APPROVAL_POLICY}" && "${MODE}" == "run" ]]; then
+    APPROVAL_POLICY="auto-read-only-prompt"
+fi
 
 if [[ ! -x "${CLI_BIN}" ]]; then
     cmake_args=()
@@ -46,6 +52,14 @@ common_args=(
     --model "${MODEL}"
 )
 
+if [[ -n "${API_KEY}" ]]; then
+    common_args+=(--api-key "${API_KEY}")
+fi
+
+if [[ -n "${APPROVAL_POLICY}" ]]; then
+    common_args+=(--approval-policy "${APPROVAL_POLICY}")
+fi
+
 case "${MODE}" in
     repl)
         exec "${CLI_BIN}" repl "${common_args[@]}" "$@"
@@ -70,7 +84,7 @@ case "${MODE}" in
         ;;
     *)
         echo "usage: $0 [repl|run|inspect|resume] [args...]" >&2
-        echo "env overrides: ENGINE_WORKSPACE_ROOT ENGINE_WORKING_DIR ENGINE_PROJECT_ID ENGINE_STORAGE_DIR ENGINE_BASE_URL ENGINE_MODEL ENGINE_PROFILE ENGINE_PROMPT" >&2
+        echo "env overrides: ENGINE_WORKSPACE_ROOT ENGINE_WORKING_DIR ENGINE_PROJECT_ID ENGINE_STORAGE_DIR ENGINE_BASE_URL ENGINE_MODEL ENGINE_API_KEY ENGINE_PROFILE ENGINE_PROMPT ENGINE_APPROVAL_POLICY BRAVE_SEARCH_KEY" >&2
         exit 1
         ;;
 esac

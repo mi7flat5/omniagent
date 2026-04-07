@@ -36,6 +36,8 @@ public:
     const WorkspaceContext& workspace() const;
     std::unique_ptr<ProjectSession> open_session(SessionOptions options = {});
     std::unique_ptr<ProjectSession> resume_session(const std::string& session_id);
+    std::unique_ptr<ProjectSession> fork_session(const std::string& session_id,
+                                                 SessionOptions options = {});
     std::vector<SessionSummary> list_sessions() const;
     bool close_session(const std::string& session_id);
     std::vector<RunSummary> list_runs() const;

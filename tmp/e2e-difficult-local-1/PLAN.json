@@ -1,0 +1,391 @@
+{
+  "phases": [
+    {
+      "phase": 0,
+      "name": "Foundations",
+      "tasks": [
+        {
+          "file": "src/app/__init__.py",
+          "description": "Package initialization for the app directory.",
+          "spec_section": "Expose core package components. `from src.app.exceptions.custom import InvalidSignatureError, IdempotencyConflictError, TenantNotFoundError, PayloadValidationError`",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_app_init.py",
+          "description": "Test the app package initialization.",
+          "spec_section": "Verify that `src.app` can be imported and that `InvalidSignatureError` is accessible via `src.app.exceptions.custom`.",
+          "depends_on": [
+            "src/app/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/app/api/__init__.py",
+          "description": "Package initialization for the api directory.",
+          "spec_section": "Expose API components. `from src.app.api.v1.endpoints import router`",
+          "depends_on": [
+            "src/app/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_api_init.py",
+          "description": "Test the api package initialization.",
+          "spec_section": "Verify that `src.app.api` can be imported and that `src.app.api.v1.endpoints.router` is accessible via `src.app.api.__init__` and `src.app.api.v1.__init__`.",
+          "depends_on": [
+            "src/app/api/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/app/api/v1/__init__.py",
+          "description": "Package initialization for the v1 api directory.",
+          "spec_section": "Expose V1 API components. `from src.app.api.v1.endpoints import router`",
+          "depends_on": [
+            "src/app/api/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_v1_init.py",
+          "description": "Test the v1 api package initialization.",
+          "spec_section": "Verify that `src.app.api.v1` can be imported and that `src.app.api.v1.endpoints.router` is accessible.",
+          "depends_on": [
+            "src/app/api/v1/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/app/core/__init__.py",
+          "description": "Package initialization for the core directory.",
+          "spec_section": "Expose core components. `from src.app.core.config import Settings`, `from src.app.core.security import verify_hmac_signature`",
+          "depends_on": [
+            "src/app/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_core_init.py",
+          "description": "Test the core package initialization.",
+          "spec_section": "Verify that `src.app.core` can be imported and that `Settings` and `verify_hmac_signature` are accessible.",
+          "depends_on": [
+            "src/app/core/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/app/models/__init__.py",
+          "description": "Package initialization for the models directory.",
+          "spec_section": "Expose models. `from src.app.models.webhook import WebhookEvent, EventStatus`",
+          "depends_on": [
+            "src/app/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_models_init.py",
+          "description": "Test the models package initialization.",
+          "spec_section": "Verify that `src.app.models` can be imported and that `WebhookEvent` and `EventStatus` are accessible.",
+          "depends_on": [
+            "src/app/models/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/app/services/__init__.py",
+          "description": "Package initialization for the services directory.",
+          "spec_section": "Expose services. `from src.app.services.relay import process_webhook_event`",
+          "depends_on": [
+            "src/app/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_services_init.py",
+          "description": "Test the services package initialization.",
+          "spec_section": "Verify that `src.app.services` can be imported and that `process_webhook_event` is accessible.",
+          "depends_on": [
+            "src/app/services/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/app/exceptions/__init__.py",
+          "description": "Package initialization for the exceptions directory.",
+          "spec_section": "Expose exceptions. `from src.app.exceptions.custom import InvalidSignatureError, IdempotencyConflictError, TenantNotFoundError, PayloadValidationError`",
+          "depends_on": [
+            "src/app/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_exceptions_init.py",
+          "description": "Test the exceptions package initialization.",
+          "spec_section": "Verify that `src.app.exceptions` can be imported and that the custom exception classes are accessible.",
+          "depends_on": [
+            "src/app/exceptions/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/app/db/__init__.py",
+          "description": "Package initialization for the db directory.",
+          "spec_section": "Expose database components. `from src.app.db.session import get_db`",
+          "depends_on": [
+            "src/app/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_db_init.py",
+          "description": "Test the db package initialization.",
+          "spec_section": "Verify that `src.app.db` can be imported and that `get_db` is accessible.",
+          "depends_on": [
+            "src/app/db/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/cli/__init__.py",
+          "description": "Package initialization for the cli directory.",
+          "spec_section": "Expose CLI components. `from src.cli.admin import admin_cli`",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_cli_init.py",
+          "description": "Test the cli package initialization.",
+          "spec_section": "Verify that `src.cli` can be imported and that `admin_cli` is accessible.",
+          "depends_on": [
+            "src/cli/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/app/core/config.py",
+          "description": "Application configuration using Pydantic Settings.",
+          "spec_section": "Implement a Settings class using `from pydantic_settings import BaseSettings`. It must include `DATABASE_URL: str`, `SECRET_KEY: str`, and `RETRY_LIMIT: int = 5`. Use absolute imports where necessary.",
+          "depends_on": [
+            "src/app/core/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_config.py",
+          "description": "Test the configuration settings.",
+          "spec_section": "Test the `Settings` class to ensure `DATABASE_URL` and `SECRET_KEY` are correctly loaded from environment variables.",
+          "depends_on": [
+            "src/app/core/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/app/exceptions/custom.py",
+          "description": "Custom exception classes for the application.",
+          "spec_section": "Define the following exception classes: `InvalidSignatureError(Exception)`, `IdempotencyConflictError(Exception)`, `TenantNotFoundError(Exception)`, and `PayloadValidationError(Exception)`.",
+          "depends_on": [
+            "src/app/exceptions/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_exceptions.py",
+          "description": "Test the custom exception classes.",
+          "spec_section": "Test that `InvalidSignatureError`, `IdempotencyConflictError`, `TenantNotFoundError`, and `PayloadValidationError` can be raised and caught correctly.",
+          "depends_on": [
+            "src/app/exceptions/custom.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/app/db/session.py",
+          "description": "Database session management using SQLAlchemy.",
+          "spec_section": "Implement an asynchronous engine and session factory using `from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker`. Provide a `get_db` dependency function.",
+          "depends_on": [
+            "src/app/db/__init__.py",
+            "src/app/core/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_db_session.py",
+          "description": "Test the database session management.",
+          "spec_section": "Test the `get_db` generator function to ensure it yields an `AsyncSession` and closes it correctly.",
+          "depends_on": [
+            "src/app/db/session.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 1,
+      "name": "Domain & Security",
+      "tasks": [
+        {
+          "file": "src/app/models/webhook.py",
+          "description": "SQLAlchemy models for webhook events.",
+          "spec_section": "Define `EventStatus` Enum with `RECEIVED`, `PROCESSING`, `DELIVERED`, `DEAD_LETTER`. Implement `WebhookEvent` model with `id: UUID`, `tenant_id: UUID`, `idempotency_key: str`, `payload: dict`, `status: EventStatus`, `retry_count: int`, and `next_retry_at: datetime` using `from sqlalchemy.orm import DeclarativeBase` and `from sqlalchemy import Column, String, JSON, DateTime, Integer`.",
+          "depends_on": [
+            "src/app/models/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_models.py",
+          "description": "Test the webhook models.",
+          "spec_section": "Test the `WebhookEvent` model instantiation and ensure the `EventStatus` enum values are correct.",
+          "depends_on": [
+            "src/app/models/webhook.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/app/core/security.py",
+          "description": "Security utilities for signature verification.",
+          "spec_section": "Implement `verify_hmac_signature(payload: bytes, signature: str, secret: str) -> bool`. Use `import hmac`, `import hashlib`, and `from src.app.exceptions.custom import InvalidSignatureError`. Use `hmac.compare_digest` for security.",
+          "depends_on": [
+            "src/app/core/__init__.py",
+            "src/app/exceptions/custom.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_security.py",
+          "description": "Test the security utilities.",
+          "spec_section": "Test the `verify_hmac_signature` function with valid signatures, invalid signatures, and missing signatures (expecting `InvalidSignatureError`).",
+          "depends_on": [
+            "src/app/core/security.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Business Logic",
+      "tasks": [
+        {
+          "file": "src/app/services/relay.py",
+          "description": "Core logic for processing and relaying webhooks.",
+          "spec_section": "Implement `process_webhook_event(tenant_id: str, payload: dict, signature: str, idempotency_key: str, secret: str) -> WebhookEvent`. It must use `from src.app.models.webhook import WebhookEvent, EventStatus`, `from src.app.core.security import verify_hmac_signature`, and `from src.app.exceptions.custom import ...`. It should handle signature verification and event creation.",
+          "depends_on": [
+            "src/app/services/__init__.py",
+            "src/app/models/webhook.py",
+            "src/app/core/security.py",
+            "src/app/exceptions/custom.py",
+            "src/app/db/session.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_services.py",
+          "description": "Test the relay service logic.",
+          "spec_section": "Test the `process_webhook_event` function, specifically verifying that it correctly calls `verify_hmac_signature` and returns a `WebhookEvent` with `EventStatus.RECEIVED`.",
+          "depends_on": [
+            "src/app/services/relay.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Interface",
+      "tasks": [
+        {
+          "file": "src/app/api/v1/endpoints.py",
+          "description": "FastAPI endpoints for webhook ingestion.",
+          "spec_section": "Implement a FastAPI router with a `POST /webhooks` endpoint. It should accept `tenant_id`, `payload`, `X-Signature`, and `X-Idempotency-Key`. Use `from src.app.services.relay import process_webhook_event` and `from src.app.models.webhook import WebhookEvent`.",
+          "depends_on": [
+            "src/app/api/v1/__init__.py",
+            "src/app/services/relay.py",
+            "src/app/models/webhook.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/app/main.py",
+          "description": "FastAPI application entry point.",
+          "spec_section": "Initialize the FastAPI app using `from fastapi import FastAPI` and include the router from `src.app.api.v1.endpoints`.",
+          "depends_on": [
+            "src/app/api/v1/endpoints.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_api.py",
+          "description": "Integration tests for the API and application.",
+          "spec_section": "Test the `POST /v1/webhooks` endpoint using `TestClient`. Verify successful ingestion (201), invalid signature (403), and duplicate idempotency key (409). Also test the application startup.",
+          "depends_on": [
+            "src/app/api/v1/endpoints.py",
+            "src/app/main.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "integration"
+        }
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "CLI",
+      "tasks": [
+        {
+          "file": "src/cli/admin.py",
+          "description": "Administrative CLI for managing webhooks.",
+          "spec_section": "Implement a CLI using `import click`. Provide a `replay` command that takes a `tenant_id` and updates the status of `DEAD_LETTER` events to `PROCESSING` in the database using `src.app.db.session`.",
+          "depends_on": [
+            "src/cli/__init__.py",
+            "src/app/db/session.py",
+            "src/app/models/webhook.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_cli.py",
+          "description": "Test the administrative CLI.",
+          "spec_section": "Test the `replay` command using `click.testing.CliRunner`. Verify that it correctly identifies and updates events with `EventStatus.DEAD_LETTER` to `PROCESSING`.",
+          "depends_on": [
+            "src/cli/admin.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    }
+  ]
+}

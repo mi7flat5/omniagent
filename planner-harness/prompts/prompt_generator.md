@@ -66,6 +66,10 @@ IMPORTANT field names: the array in each phase is called "tasks" (not "files"). 
    - `myapp/__init__.py` → `tests/test_myapp_init.py` (NOT `tests/test_init.py`)
    - `myapp/utils/__init__.py` → `tests/test_utils_init.py`
    The pattern is: `tests/test_<parent_dir>_init.py`
+  NEVER say "no test required" for a package `__init__.py` file. Package init files are still source files and still require matching tests.
+  Package `__init__.py` spec_section content must still be non-trivial: include the concrete imports/re-exports and the intended package surface, not a one-line placeholder.
+  For every test file, the test spec_section must explicitly mention the exact functions, classes, endpoints, or behaviors from the source file it validates.
+  When any spec_section uses a type defined in another file, include the explicit import line for that symbol in the consuming file's spec_section.
 
 6. **PARALLELISM RULES — MAXIMIZE PHASE WIDTH**:
    Instruct the planner to group files into the WIDEST possible phases. Files that share NO dependency relationship MUST be in the SAME phase. Only create a new phase when a file depends on something from the current phase.

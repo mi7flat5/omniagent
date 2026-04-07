@@ -1,0 +1,80 @@
+{
+  "phases": [
+    {
+      "phase": 0,
+      "name": "Data Models",
+      "tasks": [
+        {
+          "file": "src/models.py",
+          "description": "Defines the Note dataclass.",
+          "spec_section": "Implement the Note data model using a dataclass. The Note class must have three fields: id (int), content (str), and timestamp (float). This file serves as the base data structure for the entire application.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_models.py",
+          "description": "Tests the Note dataclass.",
+          "spec_section": "Import Note from src.models. Write unit tests to verify that the Note dataclass can be instantiated correctly with an integer id, a string content, and a float timestamp, and that the attributes are correctly assigned.",
+          "depends_on": [
+            "src/models.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 1,
+      "name": "Business Logic",
+      "tasks": [
+        {
+          "file": "src/manager.py",
+          "description": "Implements the NoteManager for CRUD operations.",
+          "spec_section": "Implement NoteManager class and custom exceptions. Required imports: from typing import List, import json, import os, import time, from src.models import Note. Implement NoteNotFoundError(Exception) and InvalidIDError(ValueError). NoteManager must include: __init__(storage_path), _ensure_storage_exists(), add_note(content), list_notes(), remove_note(note_id), and _save_all(notes). add_note should increment IDs based on the highest existing ID.",
+          "depends_on": [
+            "src/models.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_manager.py",
+          "description": "Tests the NoteManager class.",
+          "spec_section": "Import NoteManager, NoteNotFoundError, and InvalidIDError from src.manager, and Note from src.models. Write unit tests for NoteManager.add_note (verifying content and ID), NoteManager.list_notes (verifying list length and content), and NoteManager.remove_note (verifying successful removal and raising NoteNotFoundError or InvalidIDError).",
+          "depends_on": [
+            "src/manager.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "CLI Interface",
+      "tasks": [
+        {
+          "file": "src/main.py",
+          "description": "Implements the CLI entry point.",
+          "spec_section": "Implement the CLI entry point. Required imports: import sys, from typing import List, from src.manager import NoteManager, NoteNotFoundError, InvalidIDError. The main(args: List[str]) function must handle 'add <text>', 'list', and 'remove <id>' commands. It should use NoteManager with 'notes.json' as the storage path and print appropriate success or error messages to stdout.",
+          "depends_on": [
+            "src/manager.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_main.py",
+          "description": "Tests the CLI entry point.",
+          "spec_section": "Import main from src.main. Write unit tests that call the main function with different lists of strings to simulate command line arguments. Test the 'add' command, 'list' command, and 'remove' command, ensuring the application handles valid and invalid inputs as specified in the requirements.",
+          "depends_on": [
+            "src/main.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    }
+  ]
+}

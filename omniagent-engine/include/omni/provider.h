@@ -35,6 +35,7 @@ struct CompletionRequest {
     std::vector<Message>        messages;
     std::string                 system_prompt;
     std::vector<nlohmann::json> tools;
+    std::optional<std::string>  tool_choice;
     std::optional<double>       temperature;
     std::optional<int>          max_tokens;
     std::vector<std::string>    stop_sequences;

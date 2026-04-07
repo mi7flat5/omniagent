@@ -10,6 +10,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 
 namespace omni::engine {
 
@@ -200,6 +201,9 @@ nlohmann::json HttpProvider::build_request_body(const CompletionRequest& request
 
     if (!request.tools.empty()) {
         body["tools"] = request.tools;
+        if (request.tool_choice.has_value()) {
+            body["tool_choice"] = *request.tool_choice;
+        }
     }
 
     return body;
@@ -215,6 +219,7 @@ bool HttpProvider::parse_sse_line(const std::string& data,
                                    bool& thinking_started,
                                    bool& thinking_open,
                                    bool& text_started,
+                                   std::unordered_set<int>& open_tool_blocks,
                                    Usage& usage) const
 {
     if (data == "[DONE]") return false;
@@ -310,19 +315,28 @@ bool HttpProvider::parse_sse_line(const std::string& data,
                             start_ev.tool_name = tc["function"]["name"].get<std::string>();
                         }
                         cb(start_ev);
+                        open_tool_blocks.insert(abs_index);
                     }
 
                     // Argument fragment
                     if (tc.contains("function") && tc["function"].contains("arguments")) {
-                        const std::string args_frag =
-                            tc["function"]["arguments"].get<std::string>();
-                        if (!args_frag.empty()) {
+                        const auto& args_value = tc["function"]["arguments"];
+                        if (args_value.is_string()) {
+                            const std::string args_frag = args_value.get<std::string>();
+                            if (!args_frag.empty()) {
+                                StreamEventData delta_ev;
+                                delta_ev.type            = StreamEventType::ContentBlockDelta;
+                                delta_ev.index           = abs_index;
+                                delta_ev.delta_type      = "input_json_delta";
+                                delta_ev.tool_input_delta = nlohmann::json(args_frag);
+                                cb(delta_ev);
+                            }
+                        } else if (!args_value.is_null()) {
                             StreamEventData delta_ev;
                             delta_ev.type            = StreamEventType::ContentBlockDelta;
                             delta_ev.index           = abs_index;
                             delta_ev.delta_type      = "input_json_delta";
-                            // Accumulate raw argument fragments as a JSON string value
-                            delta_ev.tool_input_delta = nlohmann::json(args_frag);
+                            delta_ev.tool_input_delta = args_value;
                             cb(delta_ev);
                         }
                     }
@@ -340,6 +354,14 @@ bool HttpProvider::parse_sse_line(const std::string& data,
 
     // Finish reason — emit MessageDelta + MessageStop and signal done
     if (!finish_reason.empty()) {
+        for (const int index : open_tool_blocks) {
+            StreamEventData stop_ev;
+            stop_ev.type  = StreamEventType::ContentBlockStop;
+            stop_ev.index = index;
+            cb(stop_ev);
+        }
+        open_tool_blocks.clear();
+
         StreamEventData md;
         md.type        = StreamEventType::MessageDelta;
         md.stop_reason = stop_reason_from_finish(finish_reason);
@@ -397,6 +419,7 @@ Usage HttpProvider::complete(const CompletionRequest& request,
     bool         thinking_started = false;
     bool         thinking_open = false;
     bool         text_started = false;
+    std::unordered_set<int> open_tool_blocks;
     Usage        usage;
     bool         done = false;
 
@@ -421,7 +444,8 @@ Usage HttpProvider::complete(const CompletionRequest& request,
 
             if (line.rfind("data: ", 0) == 0) {
                 const std::string payload = line.substr(6);
-                if (!parse_sse_line(payload, stream_cb, thinking_started, thinking_open, text_started, usage)) {
+                if (!parse_sse_line(payload, stream_cb, thinking_started, thinking_open, text_started,
+                                    open_tool_blocks, usage)) {
                     done = true;
                 }
             }
@@ -459,6 +483,13 @@ Usage HttpProvider::complete(const CompletionRequest& request,
         StreamEventData cbe;
         cbe.type  = StreamEventType::ContentBlockStop;
         cbe.index = thinking_started ? 1 : 0;
+        stream_cb(cbe);
+    }
+
+    for (const int index : open_tool_blocks) {
+        StreamEventData cbe;
+        cbe.type  = StreamEventType::ContentBlockStop;
+        cbe.index = index;
         stream_cb(cbe);
     }
 

@@ -134,6 +134,39 @@ CompletionRequest QueryEngine::build_request() const {
         }
     }
 
+    const bool has_workspace = !tool_context_.workspace_root.empty();
+    bool has_prior_tool_turn = false;
+    for (const Message& message : messages_) {
+        if (message.role == Role::ToolResult && !message.tool_results.empty()) {
+            has_prior_tool_turn = true;
+            break;
+        }
+        if (message.role != Role::Assistant) {
+            continue;
+        }
+        for (const ContentBlock& block : message.content) {
+            if (std::get_if<ToolUseContent>(&block.data)) {
+                has_prior_tool_turn = true;
+                break;
+            }
+        }
+        if (has_prior_tool_turn) {
+            break;
+        }
+    }
+
+    if (!req.tools.empty()) {
+        req.tool_choice = has_workspace && !has_prior_tool_turn ? "required" : "auto";
+        if (req.tool_choice == "required") {
+            if (!req.system_prompt.empty()) {
+                req.system_prompt += "\n\n";
+            }
+            req.system_prompt +=
+                "When tools are available in this turn, do not describe intended actions. "
+                "Use structured tool calls to inspect or change the workspace before replying.";
+        }
+    }
+
     // Max output token escalation: if the last turn was truncated, double the
     // token limit (up to 8x initial) so incomplete tool calls can complete.
     const auto caps = provider_->capabilities();

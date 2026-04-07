@@ -12,13 +12,14 @@ struct CliOptions {
     std::filesystem::path workspace_root;
     std::optional<std::filesystem::path> working_dir;
     std::optional<std::filesystem::path> storage_dir;
-    std::string profile = "explore";
+    std::string profile = "coordinator";
     std::optional<std::string> session_id;
     std::optional<std::string> run_id;
     std::string base_url;
     std::string model;
     std::string api_key;
     std::optional<std::string> prompt;
+    std::optional<std::string> approval_policy;
     std::string resume_input = "approve";
 };
 

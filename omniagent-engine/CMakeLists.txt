@@ -37,6 +37,8 @@ add_library(omni-engine STATIC
     src/tools/tool_registry.cpp
     src/tools/tool_executor.cpp
     src/tools/workspace_tools.cpp
+    src/tools/web_tools.cpp
+    src/tools/planner_tools.cpp
     src/agents/agent_manager.cpp
     src/agents/agent_tool.cpp
     src/mcp/mcp_client.cpp
@@ -97,7 +99,10 @@ if(BUILD_TESTING)
         tests/test_tool_registry.cpp
         tests/test_tool_executor.cpp
         tests/test_query_engine.cpp
+        tests/test_http_provider.cpp
         tests/test_session_submit.cpp
+        tests/test_web_tools.cpp
+        tests/test_planner_tools.cpp
         tests/test_cost_tracker.cpp
         tests/test_permission_checker.cpp
         tests/test_project_host.cpp
@@ -106,6 +111,7 @@ if(BUILD_TESTING)
         tests/test_hooks.cpp
         tests/test_memory_loader.cpp
         tests/test_command_registry.cpp
+        tests/test_cli_repl.cpp
         tests/test_agent_manager.cpp
         tests/test_plugin_manager.cpp
         tests/test_mcp_client.cpp

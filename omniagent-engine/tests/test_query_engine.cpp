@@ -78,6 +78,7 @@ public:
     struct RequestSnapshot {
         size_t tool_count = 0;
         std::string system_prompt;
+        std::optional<std::string> tool_choice;
     };
 
     std::vector<QECannedResponse> responses;
@@ -90,7 +91,7 @@ public:
     {
         if (stop_flag.load()) return {};
 
-        requests.push_back(RequestSnapshot{request.tools.size(), request.system_prompt});
+        requests.push_back(RequestSnapshot{request.tools.size(), request.system_prompt, request.tool_choice});
 
         const QECannedResponse& resp =
             (call_count < responses.size())
@@ -221,6 +222,69 @@ TEST(QueryEngine, ToolCallLoop) {
     EXPECT_EQ(engine.messages()[1].role, Role::Assistant);
     EXPECT_EQ(engine.messages()[2].role, Role::ToolResult);
     EXPECT_EQ(engine.messages()[3].role, Role::Assistant);
+}
+
+TEST(QueryEngine, RequiresToolUseOnInitialProjectTurn) {
+    ToolRegistry registry;
+    registry.register_tool(std::make_unique<QEEchoTool>());
+
+    auto mock_owned = std::make_unique<QEMockProvider>();
+    mock_owned->responses = {QECannedResponse{"Done", {}, {1, 1, 0}}};
+    QEMockProvider* mock_raw = mock_owned.get();
+
+    QEAllowAllDelegate delegate;
+    QECollectingObserver observer;
+
+    QueryEngineConfig cfg;
+    cfg.max_turns = 5;
+
+    PermissionChecker checker(delegate);
+    QueryEngine engine(std::move(mock_owned), registry, checker, observer, cfg);
+
+    ToolContext context;
+    context.workspace_root = "/tmp/project";
+    context.working_dir = "/tmp/project";
+    engine.set_tool_context(context);
+    engine.submit("inspect the project");
+
+    ASSERT_EQ(mock_raw->requests.size(), 1u);
+    ASSERT_TRUE(mock_raw->requests[0].tool_choice.has_value());
+    EXPECT_EQ(*mock_raw->requests[0].tool_choice, "required");
+}
+
+TEST(QueryEngine, RelaxesToolRequirementAfterToolResultsExist) {
+    auto echo_owned = std::make_unique<QEEchoTool>();
+
+    ToolRegistry registry;
+    registry.register_tool(std::move(echo_owned));
+
+    auto mock_owned = std::make_unique<QEMockProvider>();
+    mock_owned->responses = {
+        QECannedResponse{"", {ToolUseContent{"call-1", "echo", nlohmann::json::object()}}, {1, 1, 0}},
+        QECannedResponse{"Done", {}, {1, 1, 0}}
+    };
+    QEMockProvider* mock_raw = mock_owned.get();
+
+    QEAllowAllDelegate delegate;
+    QECollectingObserver observer;
+
+    QueryEngineConfig cfg;
+    cfg.max_turns = 5;
+
+    PermissionChecker checker(delegate);
+    QueryEngine engine(std::move(mock_owned), registry, checker, observer, cfg);
+
+    ToolContext context;
+    context.workspace_root = "/tmp/project";
+    context.working_dir = "/tmp/project";
+    engine.set_tool_context(context);
+    engine.submit("inspect the project");
+
+    ASSERT_EQ(mock_raw->requests.size(), 2u);
+    ASSERT_TRUE(mock_raw->requests[0].tool_choice.has_value());
+    EXPECT_EQ(*mock_raw->requests[0].tool_choice, "required");
+    ASSERT_TRUE(mock_raw->requests[1].tool_choice.has_value());
+    EXPECT_EQ(*mock_raw->requests[1].tool_choice, "auto");
 }
 
 // MaxTurnsLimit: every response calls a tool → stops after max_turns

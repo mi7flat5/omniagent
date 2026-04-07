@@ -5,6 +5,9 @@
 #include <memory>
 #include <vector>
 
+#include "planner_tools.h"
+#include "web_tools.h"
+
 namespace omni::engine {
 
 class ReadFileTool : public Tool {

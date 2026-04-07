@@ -81,6 +81,18 @@ inline Event enrich_event(const Event& event,
 inline std::vector<AgentProfileManifest> default_profiles() {
     std::vector<AgentProfileManifest> profiles;
 
+    ToolCapabilityPolicy coordinator_policy;
+    coordinator_policy.allow_read_only = false;
+    coordinator_policy.explicit_allow = {"agent", "send_message"};
+    profiles.push_back(AgentProfileManifest{
+        .name = "coordinator",
+        .system_prompt = "Act as a coordinator-only agent. Do not inspect the local filesystem directly, do not browse the web directly, and do not edit files directly. Delegate local investigation to explore agents, web-backed investigation to research agents, spec creation and validation to spec agents, and implementation planning to plan agents. When the user asks to build an application, drive a spec-first workflow that produces a validated SPEC.md before a plan worker generates and validates PLAN.json for graph execution.",
+        .tool_policy = coordinator_policy,
+        .default_permission_mode = PermissionMode::Bypass,
+        .sub_agents_allowed = true,
+        .max_parallel_tools = 4,
+    });
+
     profiles.push_back(AgentProfileManifest{
         .name = "explore",
         .system_prompt = "Focus on inspection, explanation, and safe read-only investigation.",
@@ -91,6 +103,8 @@ inline std::vector<AgentProfileManifest> default_profiles() {
     });
 
     ToolCapabilityPolicy spec_policy;
+    spec_policy.allow_write = true;
+    spec_policy.allow_shell = true;
     spec_policy.allow_network = true;
     spec_policy.allow_mcp = true;
     profiles.push_back(AgentProfileManifest{
@@ -102,10 +116,19 @@ inline std::vector<AgentProfileManifest> default_profiles() {
         .max_parallel_tools = 10,
     });
 
+    ToolCapabilityPolicy plan_policy;
+    plan_policy.allow_write = true;
+    plan_policy.allow_shell = true;
+    plan_policy.explicit_allow = {
+        "planner_validate_plan",
+        "planner_repair_plan",
+        "planner_build_plan",
+        "planner_build_from_idea",
+    };
     profiles.push_back(AgentProfileManifest{
         .name = "plan",
         .system_prompt = "Produce concrete execution plans and avoid mutating the workspace.",
-        .tool_policy = ToolCapabilityPolicy{},
+        .tool_policy = plan_policy,
         .default_permission_mode = PermissionMode::Default,
         .sub_agents_allowed = false,
         .max_parallel_tools = 10,
@@ -550,7 +573,10 @@ inline void persist_run_state(const std::shared_ptr<RunState>& run_state) {
         return;
     }
 
-    auto host_state = require_host_state(session_state);
+    auto host_state = session_state->host.lock();
+    if (!host_state) {
+        return;
+    }
     if (!has_persistence(*host_state)) {
         return;
     }

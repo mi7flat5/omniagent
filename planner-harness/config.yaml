@@ -64,7 +64,9 @@ models:
     api_key: none
     max_tokens: 65536
     temperature: 0.0
+    timeout_seconds: 600
 
 defaults:
+  request_timeout_seconds: 180
   adversary_model: qwen3.5
-  planner_model: qwen3.5
+  planner_model: opus5-5

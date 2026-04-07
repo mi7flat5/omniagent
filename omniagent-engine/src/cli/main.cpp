@@ -73,6 +73,10 @@ omni::engine::cli::CliOptions parse_args(int argc, char** argv) {
             options.prompt = require_value("--prompt");
             continue;
         }
+        if (arg == "--approval-policy") {
+            options.approval_policy = require_value("--approval-policy");
+            continue;
+        }
         if (arg == "--resume-input") {
             options.resume_input = require_value("--resume-input");
             continue;

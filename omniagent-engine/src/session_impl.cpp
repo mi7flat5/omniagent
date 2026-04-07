@@ -176,7 +176,10 @@ void Session::set_tool_filter(std::vector<std::string> allowed_tools) {
 }
 
 void Session::set_tool_context(ToolContext context) {
-    impl_->query_engine->set_tool_context(std::move(context));
+    impl_->query_engine->set_tool_context(context);
+    if (impl_->agent_manager) {
+        impl_->agent_manager->set_parent_tool_context(std::move(context));
+    }
 }
 
 void Session::set_system_prompt(std::string system_prompt) {

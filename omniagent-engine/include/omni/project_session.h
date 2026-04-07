@@ -66,6 +66,7 @@ public:
     SessionSnapshot snapshot() const;
     std::vector<ToolSummary> tools() const;
     void reset();
+    std::size_t rewind_messages(std::size_t count = 1);
     void close();
 
 private:

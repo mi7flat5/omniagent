@@ -30,11 +30,14 @@ void StreamAssembler::process(const StreamEventData& event) {
             if (event.delta_type == "text_delta" || event.delta_type == "thinking_delta") {
                 blk.text += event.delta_text;
             } else if (event.delta_type == "input_json_delta") {
-                // Partial JSON string — accumulate as raw text then merge at stop
-                if (blk.tool_input.is_null()) {
+                if (event.tool_input_delta.is_string()) {
+                    blk.tool_input_json_text += event.tool_input_delta.get<std::string>();
+                } else if (blk.tool_input.is_null()) {
                     blk.tool_input = event.tool_input_delta;
-                } else {
+                } else if (blk.tool_input.is_object() && event.tool_input_delta.is_object()) {
                     blk.tool_input.merge_patch(event.tool_input_delta);
+                } else {
+                    blk.tool_input = event.tool_input_delta;
                 }
             }
             break;
@@ -47,8 +50,17 @@ void StreamAssembler::process(const StreamEventData& event) {
             InProgressBlock& blk = it->second;
 
             // Prefer a complete input from the stop event if provided
-            nlohmann::json final_input =
-                (!event.tool_input.is_null()) ? event.tool_input : blk.tool_input;
+            nlohmann::json final_input = event.tool_input;
+            if (final_input.is_null() && !blk.tool_input_json_text.empty()) {
+                try {
+                    final_input = nlohmann::json::parse(blk.tool_input_json_text);
+                } catch (...) {
+                    final_input = blk.tool_input_json_text;
+                }
+            }
+            if (final_input.is_null()) {
+                final_input = blk.tool_input;
+            }
 
             if (blk.type == "text") {
                 completed_.push_back(ContentBlock{TextContent{blk.text}});

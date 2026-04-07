@@ -1,0 +1,442 @@
+{
+  "phases": [
+    {
+      "phase": 0,
+      "name": "Foundations",
+      "tasks": [
+        {
+          "file": "src/core/exceptions.py",
+          "description": "Define the base exception hierarchy for the platform.",
+          "spec_section": "Define the base exception class `OmniAgentError` and its subclasses: `AuthenticationError`, `TenantIsolationError`, `WorkflowExecutionError`, `InvalidSignatureError`, and `IdempotencyConflictError`. All subclasses must inherit from `OmniAgentError`. Example: `class AuthenticationError(OmniAgentError): pass`.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_exceptions.py",
+          "description": "Test the exception hierarchy.",
+          "spec_section": "Test that all custom exceptions like `AuthenticationError` and `WorkflowExecutionError` inherit correctly from `OmniAgentError` and can be caught in try-except blocks.",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/core/config.py",
+          "description": "Implement configuration management using Pydantic Settings.",
+          "spec_section": "Implement configuration management using Pydantic Settings. `from pydantic_settings import BaseSettings; class Settings(BaseSettings): DATABASE_URL: str; REDIS_URL: str; JWT_SECRET: str; class Config: env_file = '.env'; settings = Settings();` This class will load environment variables for the application.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_config.py",
+          "description": "Test the configuration loading.",
+          "spec_section": "Test the `Settings` class in `src/core/config.py`. Verify that environment variables are correctly loaded and default values are applied when variables are missing.",
+          "depends_on": [
+            "src/core/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 1,
+      "name": "Core Logic & Models",
+      "tasks": [
+        {
+          "file": "src/core/security.py",
+          "description": "Implement JWT and RBAC security utilities.",
+          "spec_section": "Implement security utilities. `import jwt; from datetime import datetime, timedelta; from src.core.exceptions import AuthenticationError; class SecurityUtils: def create_access_token(self, data: dict) -> str: ... def verify_token(self, token: str) -> dict: ...` This class handles JWT encoding, decoding, and role validation.",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_security.py",
+          "description": "Test security and JWT logic.",
+          "spec_section": "Test the `verify_token` and `create_access_token` methods of `SecurityUtils` in `src/core/security.py`. Verify that expired tokens raise `AuthenticationError` and valid tokens return the correct payload.",
+          "depends_on": [
+            "src/core/security.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/models/database.py",
+          "description": "Setup SQLAlchemy database engine and session management.",
+          "spec_section": "Setup SQLAlchemy database engine and session management. `from sqlalchemy import create_engine; from sqlalchemy.orm import sessionmaker, Session; from src.core.config import settings; engine = create_engine(settings.DATABASE_URL); SessionLocal = sessionmaker(bind=engine); def get_db() -> Session: ...` This provides the database connection for the app.",
+          "depends_on": [
+            "src/core/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_database.py",
+          "description": "Test database session management.",
+          "spec_section": "Test the `get_db` generator in `src/models/database.py`. Verify that it yields a valid SQLAlchemy `Session` and that the session is properly closed after use.",
+          "depends_on": [
+            "src/models/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/services/webhook_verifier.py",
+          "description": "Implement HMAC signature verification.",
+          "spec_section": "Implement `WebhookVerifier` class. `from src.core.exceptions import InvalidSignatureError; import hmac; import hashlib; class WebhookVerifier: def __init__(self, secret: str) -> None: self.secret = secret; def verify_signature(self, payload: bytes, signature: str) -> bool: ...` uses HMAC SHA256 to verify payloads.",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_webhook_verifier.py",
+          "description": "Test the webhook verifier.",
+          "spec_section": "Test the `verify_signature` method of `WebhookVerifier`. Test cases: 1. Valid signature returns True. 2. Invalid signature raises `InvalidSignatureError`. 3. Empty payload handling.",
+          "depends_on": [
+            "src/services/webhook_verifier.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/core/__init__.py",
+          "description": "Initialize the core package.",
+          "spec_section": "from src.core.config import settings; from src.core.security import SecurityUtils; from src.core.exceptions import OmniAgentError",
+          "depends_on": [
+            "src/core/config.py",
+            "src/core/security.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_core_init.py",
+          "description": "Test the core package initialization.",
+          "spec_section": "from src.core import settings, SecurityUtils, OmniAgentError; Verify that the core package correctly exports settings, SecurityUtils, and OmniAgentError.",
+          "depends_on": [
+            "src/core/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Domain Models & Services",
+      "tasks": [
+        {
+          "file": "src/models/tenant.py",
+          "description": "Define the Tenant model.",
+          "spec_section": "Define the `Tenant` model. `from sqlalchemy import Column, String; from src.models.database import Base; class Tenant(Base): __tablename__ = 'tenants'; id = Column(String, primary_key=True); organization_id = Column(String, index=True); name = Column(String);` This model handles multi-tenant isolation.",
+          "depends_on": [
+            "src/models/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_tenant.py",
+          "description": "Test the Tenant model.",
+          "spec_section": "Test the `Tenant` model in `src/models/tenant.py`. Verify that tenant attributes like `organization_id` are correctly assigned and stored in the database.",
+          "depends_on": [
+            "src/models/tenant.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/models/workflow.py",
+          "description": "Define Workflow and WorkflowStep models.",
+          "spec_section": "Define `Workflow` and `WorkflowStep` models. `from typing import List, Dict, Any; from sqlalchemy import Column, String, JSON, ForeignKey; from src.models.database import Base; class Workflow(Base): ... class WorkflowStep(Base): ...` includes retry policies and dependency links.",
+          "depends_on": [
+            "src/models/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_workflow.py",
+          "description": "Test the Workflow models.",
+          "spec_section": "Test the `Workflow` and `WorkflowStep` models in `src/models/workflow.py`. Verify that relationships between workflows and steps are correctly defined and that JSON fields are handled.",
+          "depends_on": [
+            "src/models/workflow.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/services/outbox.py",
+          "description": "Implement the Outbox pattern for reliable event delivery.",
+          "spec_section": "Implement the Outbox pattern. `from sqlalchemy.orm import Session; from src.models.database import Base; class OutboxEvent(Base): ... class OutboxService: def save_event(self, db: Session, event_type: str, payload: dict, tenant_id: str) -> None: ...` ensures atomic event persistence.",
+          "depends_on": [
+            "src/models/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_outbox.py",
+          "description": "Test the Outbox service.",
+          "spec_section": "Test the OutboxService.save_event method in src/services/outbox.py. Verify that events are correctly saved to the database within a transaction and that the tenant_id is correctly associated.",
+          "depends_on": [
+            "src/services/outbox.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/models/__init__.py",
+          "description": "Initialize the models package.",
+          "spec_section": "from src.models.tenant import Tenant; from src.models.workflow import Workflow, WorkflowStep; from src.models.database import Base",
+          "depends_on": [
+            "src/models/tenant.py",
+            "src/models/workflow.py",
+            "src/models/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_models_init.py",
+          "description": "Test the models package initialization.",
+          "spec_section": "from src.models import Tenant, Workflow, WorkflowStep, Base; Verify that the models package correctly exports Tenant, Workflow, WorkflowStep, and Base.",
+          "depends_on": [
+            "src/models/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/services/__init__.py",
+          "description": "Initialize the services package.",
+          "spec_section": "from src.services.outbox import OutboxService; from src.services.webhook_verifier import WebhookVerifier",
+          "depends_on": [
+            "src/services/outbox.py",
+            "src/services/webhook_verifier.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_services_init.py",
+          "description": "Test the services package initialization.",
+          "spec_section": "from src.services import OutboxService, WebhookVerifier; Verify that the services package correctly exports OutboxService and WebhookVerifier.",
+          "depends_on": [
+            "src/services/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Engine & Auth API",
+      "tasks": [
+        {
+          "file": "src/engine/dag.py",
+          "description": "Implement Directed Acyclic Graph (DAG) logic.",
+          "spec_section": "Implement Directed Acyclic Graph (DAG) logic. `from typing import List, Dict, Set; class DAG: def __init__(self): self.nodes = {}; self.edges = []; def add_edge(self, u: str, v: str) -> None: ... def validate(self) -> bool: ...` ensures no cycles exist in the workflow.",
+          "depends_on": [
+            "src/models/workflow.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_dag.py",
+          "description": "Test the DAG implementation.",
+          "spec_section": "Test the `DAG` class in `src/engine/dag.py`. Verify that `add_edge` works, `validate` detects cycles, and the graph structure is correctly maintained.",
+          "depends_on": [
+            "src/engine/dag.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/engine/executor.py",
+          "description": "Implement the workflow execution engine.",
+          "spec_section": "Implement `WorkflowExecutor` class. `from typing import List, Dict, Any, Optional; from src.models.workflow import WorkflowStep, WorkflowStatus; from src.core.exceptions import WorkflowExecutionError; class WorkflowExecutor: def __init__(self, tenant_id: str) -> None: self.tenant_id = tenant_id; def execute_step(self, step: WorkflowStep, context: Dict[str, Any]) -> Dict[str, Any]: ...` handles retries and compensation.",
+          "depends_on": [
+            "src/models/workflow.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "integration"
+        },
+        {
+          "file": "src/api/auth.py",
+          "description": "Implement FastAPI authentication endpoints.",
+          "spec_section": "Implement FastAPI authentication endpoints. `from fastapi import APIRouter, Depends; from src.core.security import verify_jwt, get_current_user; from src.core.exceptions import AuthenticationError; router = APIRouter(); @router.post('/login') ...` handles JWT issuance and RBAC checks.",
+          "depends_on": [
+            "src/core/security.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_auth.py",
+          "description": "Test the authentication API.",
+          "spec_section": "Test the authentication endpoints in `src/api/auth.py`. Verify that valid credentials return a JWT and invalid credentials return a 401 Unauthorized error.",
+          "depends_on": [
+            "src/api/auth.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_engine_init.py",
+          "description": "Test the engine package initialization.",
+          "spec_section": "from src.engine import DAG, WorkflowExecutor, Scheduler; Verify that the engine package correctly exports DAG, WorkflowExecutor, and Scheduler.",
+          "depends_on": [
+            "src/engine/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "Workflow API & Scheduler",
+      "tasks": [
+        {
+          "file": "src/engine/scheduler.py",
+          "description": "Implement the workflow scheduler.",
+          "spec_section": "Implement `Scheduler` class to manage workflow execution timing. `from typing import Dict; from src.engine.executor import WorkflowExecutor; class Scheduler: def schedule_workflow(self, workflow_id: str) -> None: ...` uses a background task queue to trigger the executor.",
+          "depends_on": [
+            "src/engine/executor.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_scheduler.py",
+          "description": "Test the scheduler.",
+          "spec_section": "Test the `Scheduler` class in `src/engine/scheduler.py`. Verify that it correctly schedules tasks and interacts with the `WorkflowExecutor.execute_step` method to trigger workflow runs.",
+          "depends_on": [
+            "src/engine/scheduler.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/api/webhooks.py",
+          "description": "Implement webhook ingestion endpoint.",
+          "spec_section": "Implement webhook ingestion endpoint. `from fastapi import APIRouter, Request, Header; from src.services.webhook_verifier import WebhookVerifier; from src.core.exceptions import InvalidSignatureError; router = APIRouter(); @router.post('/ingest') ...` verifies HMAC signatures and handles idempotency.",
+          "depends_on": [
+            "src/services/webhook_verifier.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "integration"
+        },
+        {
+          "file": "tests/integration/test_webhook_flow.py",
+          "description": "Test the webhook ingestion flow.",
+          "spec_section": "Test the webhook ingestion flow in `src/api/webhooks.py`. Verify that valid HMAC signatures are accepted and invalid ones are rejected with 401 Unauthorized.",
+          "depends_on": [
+            "src/api/webhooks.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "integration"
+        },
+        {
+          "file": "src/api/workflows.py",
+          "description": "Implement workflow management API.",
+          "spec_section": "Implement workflow management API. `from fastapi import APIRouter, Depends; from src.models.workflow import Workflow; from src.models.database import get_db; router = APIRouter(); @router.post('/workflows') ...` allows creating and triggering DAG-based workflows.",
+          "depends_on": [
+            "src/models/workflow.py",
+            "src/models/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "integration"
+        },
+        {
+          "file": "tests/integration/test_workflow_execution.py",
+          "description": "Test the workflow execution engine and API.",
+          "spec_section": "Test the `execute_step` method of `WorkflowExecutor` and the workflow management in `src/api/workflows.py`. Verify that steps execute in order, retries occur on failure, and compensating actions are triggered when max retries are exceeded.",
+          "depends_on": [
+            "src/engine/executor.py",
+            "src/api/workflows.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "integration"
+        },
+        {
+          "file": "src/api/__init__.py",
+          "description": "Initialize the api package.",
+          "spec_section": "from src.api.auth import router as auth_router; from src.api.webhooks import router as webhook_router; from src.api.workflows import router as workflow_router",
+          "depends_on": [
+            "src/api/auth.py",
+            "src/api/webhooks.py",
+            "src/api/workflows.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_api_init.py",
+          "description": "Test the api package initialization.",
+          "spec_section": "from src.api import auth_router, webhook_router, workflow_router; Verify that the api package correctly exports auth_router, webhook_router, and workflow_router.",
+          "depends_on": [
+            "src/api/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/engine/__init__.py",
+          "description": "Initialize the engine package.",
+          "spec_section": "from src.engine.dag import DAG; from src.engine.executor import WorkflowExecutor; from src.engine.scheduler import Scheduler",
+          "depends_on": [
+            "src/engine/dag.py",
+            "src/engine/executor.py",
+            "src/engine/scheduler.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Entry Point",
+      "tasks": [
+        {
+          "file": "src/main.py",
+          "description": "Initialize the FastAPI application.",
+          "spec_section": "Initialize the FastAPI application. `from fastapi import FastAPI; from src.api import auth, webhooks, workflows; app = FastAPI(); app.include_router(auth.router, prefix='/api/auth'); app.include_router(webhooks.router, prefix='/api/webhooks'); app.include_router(workflows.router, prefix='/api/workflows');` This is the main entry point.",
+          "depends_on": [
+            "src/api/auth.py",
+            "src/api/webhooks.py",
+            "src/api/workflows.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "integration"
+        },
+        {
+          "file": "tests/integration/test_main.py",
+          "description": "Test the full application integration.",
+          "spec_section": "Test the full application integration in `src/main.py`. Verify that all API routers are correctly mounted and that basic end-to-end requests can be processed.",
+          "depends_on": [
+            "src/main.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "integration"
+        }
+      ]
+    }
+  ]
+}

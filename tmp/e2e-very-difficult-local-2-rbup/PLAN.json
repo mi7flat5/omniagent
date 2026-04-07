@@ -1,0 +1,333 @@
+{
+  "phases": [
+    {
+      "phase": 0,
+      "name": "Foundations",
+      "tasks": [
+        {
+          "file": "src/core/exceptions.py",
+          "description": "Define custom exception hierarchy for the platform.",
+          "spec_section": "Define class OmniAgentError(Exception). Subclasses: AuthenticationError(OmniAgentError), TenantIsolationError(OmniAgentError), WorkflowExecutionError(OmniAgentError), InvalidSignatureError(OmniAgentError), IdempotencyConflictError(OmniAgentError).",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_exceptions.py",
+          "description": "Test exception hierarchy.",
+          "spec_section": "Test that all custom exceptions inherit from OmniAgentError and can be raised and caught correctly.",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/core/config.py",
+          "description": "Configuration management using Pydantic settings.",
+          "spec_section": "Define class Settings(BaseSettings) with fields: DATABASE_URL: str, REDIS_URL: str, JWT_SECRET: str, WEBHOOK_SECRET: str, etc. Include validation for numeric boundaries like rate limits > 0.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_config.py",
+          "description": "Test configuration loading.",
+          "spec_section": "Test the Settings class loading from environment variables and validation of numeric boundaries for rate limits.",
+          "depends_on": [
+            "src/core/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/models/database.py",
+          "description": "SQLAlchemy database engine and session setup.",
+          "spec_section": "Setup SQLAlchemy Base, create_engine, and sessionmaker. Include logic for handling database connection loss scenarios.",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_database.py",
+          "description": "Test database connectivity.",
+          "spec_section": "Test the database engine initialization and session creation logic.",
+          "depends_on": [
+            "src/models/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/models/tenant.py",
+          "description": "Tenant model definition.",
+          "spec_section": "Define class Tenant(Base) with id: str (UUID), name: str, organization_id: str, and webhook_secret: str. Ensure organization_id is indexed.",
+          "depends_on": [
+            "src/models/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_tenant.py",
+          "description": "Test tenant model.",
+          "spec_section": "Test the Tenant model creation and field validation.",
+          "depends_on": [
+            "src/models/tenant.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/models/workflow.py",
+          "description": "Workflow and Step models.",
+          "spec_section": "Define class Workflow(Base) with id, tenant_id, name, status. Define class WorkflowStep(Base) with id, workflow_id, task_type, retry_policy (JSON), and dependencies (JSON). Import from src.models.tenant import Tenant.",
+          "depends_on": [
+            "src/models/database.py",
+            "src/models/tenant.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_workflow.py",
+          "description": "Test workflow models.",
+          "spec_section": "Test the Workflow and WorkflowStep model relationships and field constraints.",
+          "depends_on": [
+            "src/models/workflow.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 1,
+      "name": "Core Logic",
+      "tasks": [
+        {
+          "file": "src/core/security.py",
+          "description": "JWT and RBAC implementation.",
+          "spec_section": "Implement create_access_token(data: dict, expires_delta: timedelta) and verify_jwt(token: str). Include RBAC check: check_permissions(user_role: str, required_role: str). Import from src.core.exceptions import AuthenticationError, TenantIsolationError.",
+          "depends_on": [
+            "src/core/exceptions.py",
+            "src/core/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_security.py",
+          "description": "Test security and RBAC.",
+          "spec_section": "Test the create_access_token function and the check_permissions method for admin, operator, and user roles.",
+          "depends_on": [
+            "src/core/security.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/services/webhook_verifier.py",
+          "description": "HMAC signature verification.",
+          "spec_section": "Implement class WebhookVerifier with method verify_signature(payload: bytes, signature: str) -> bool. Raise InvalidSignatureError if mismatch. Import from src.core.exceptions import InvalidSignatureError.",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_webhook_verifier.py",
+          "description": "Test webhook verification.",
+          "spec_section": "Test the verify_signature method of WebhookVerifier with valid, invalid, and empty signatures.",
+          "depends_on": [
+            "src/services/webhook_verifier.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/services/outbox.py",
+          "description": "Outbox pattern implementation.",
+          "spec_section": "Implement class OutboxService with method save_event(db: Session, event_type: str, payload: dict, tenant_id: str). Ensure it runs in the same transaction as business logic. Import from src.models.database import Base.",
+          "depends_on": [
+            "src/models/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_outbox.py",
+          "description": "Test outbox service.",
+          "spec_section": "Test the save_event method of OutboxService to ensure events are persisted correctly.",
+          "depends_on": [
+            "src/services/outbox.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/engine/dag.py",
+          "description": "DAG processing logic.",
+          "spec_section": "Implement class DAGProcessor with method validate_dag(steps: List[WorkflowStep]) -> bool to detect cycles. Import from src.models.workflow import WorkflowStep.",
+          "depends_on": [
+            "src/models/workflow.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_dag.py",
+          "description": "Test DAG logic.",
+          "spec_section": "Test the validate_dag method of DAGProcessor with cyclic and acyclic step dependencies.",
+          "depends_on": [
+            "src/engine/dag.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Execution & API",
+      "tasks": [
+        {
+          "file": "src/engine/executor.py",
+          "description": "Workflow execution engine.",
+          "spec_section": "Implement class WorkflowExecutor with method execute_step(step: WorkflowStep, context: Dict[str, Any]) -> Dict[str, Any]. Include retry logic with exponential backoff and _trigger_compensation. Import from src.models.workflow import WorkflowStep, WorkflowStatus and src.core.exceptions import WorkflowExecutionError.",
+          "depends_on": [
+            "src/engine/dag.py",
+            "src/models/workflow.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/integration/test_workflow_execution.py",
+          "description": "Integration test for workflow execution.",
+          "spec_section": "Test the full execution flow of WorkflowExecutor including retries and compensating actions.",
+          "depends_on": [
+            "src/engine/executor.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/engine/scheduler.py",
+          "description": "Workflow scheduler.",
+          "spec_section": "Implement class WorkflowScheduler with method schedule_workflow(workflow_id: str). Use Redis for queueing. Import from src.models.workflow import Workflow.",
+          "depends_on": [
+            "src/engine/executor.py",
+            "src/models/workflow.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_scheduler.py",
+          "description": "Test scheduler.",
+          "spec_section": "Test the schedule_workflow method of WorkflowScheduler.",
+          "depends_on": [
+            "src/engine/scheduler.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/api/auth.py",
+          "description": "Authentication API endpoints.",
+          "spec_section": "Implement FastAPI routes for /api/auth/login and /api/auth/token. Use src.core.security to validate credentials. Return JWT tokens.",
+          "depends_on": [
+            "src/core/security.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/unit/test_auth.py",
+          "description": "Unit test for auth API.",
+          "spec_section": "Test the login and token endpoints in src/api/auth.py.",
+          "depends_on": [
+            "src/api/auth.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/api/webhooks.py",
+          "description": "Webhook ingestion API.",
+          "spec_section": "Implement POST /api/webhooks/ingest. Use src.services.webhook_verifier.WebhookVerifier for HMAC. Implement idempotency check using X-Idempotency-Key. Import from src.core.exceptions import InvalidSignatureError, IdempotencyConflictError.",
+          "depends_on": [
+            "src/services/webhook_verifier.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/integration/test_webhook_flow.py",
+          "description": "Integration test for webhook flow.",
+          "spec_section": "Test the full webhook ingestion flow from request to database persistence and idempotency.",
+          "depends_on": [
+            "src/api/webhooks.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/api/workflows.py",
+          "description": "Workflow management API.",
+          "spec_section": "Implement CRUD endpoints for workflows: GET /api/workflows, POST /api/workflows, etc. Enforce tenant isolation by filtering all queries by organization_id from the JWT. Import from src.models.workflow import Workflow.",
+          "depends_on": [
+            "src/models/workflow.py",
+            "src/core/security.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/integration/test_workflow_execution.py",
+          "description": "Integration test for workflow API.",
+          "spec_section": "Test the workflow management endpoints and their interaction with the engine.",
+          "depends_on": [
+            "src/api/workflows.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Entrypoint",
+      "tasks": [
+        {
+          "file": "src/main.py",
+          "description": "FastAPI application entrypoint.",
+          "spec_section": "Initialize FastAPI app, include routers from src.api, setup OpenTelemetry middleware, and configure Prometheus metrics. Import from src.api.auth, src.api.webhooks, and src.api.workflows.",
+          "depends_on": [
+            "src/api/auth.py",
+            "src/api/webhooks.py",
+            "src/api/workflows.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/integration/test_main.py",
+          "description": "Full system integration test.",
+          "spec_section": "Test the complete system startup and a basic end-to-end flow from API request to workflow execution.",
+          "depends_on": [
+            "src/main.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    }
+  ]
+}

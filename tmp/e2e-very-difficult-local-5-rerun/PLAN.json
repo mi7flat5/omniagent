@@ -1,0 +1,284 @@
+{
+  "phases": [
+    {
+      "phase": 0,
+      "name": "Foundational Modules",
+      "tasks": [
+        {
+          "file": "src/workflow_platform/__init__.py",
+          "description": "Package initialization and public API re-exports",
+          "spec_section": "Initialize the workflow_platform package. Re-export public classes and functions from submodules. Ensure `__all__` is defined to control public API surface. Import `Config` from `config.py` and `WorkflowEngine` from `engine.py` for convenience access. Handle version string definition.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_workflow_platform_init.py",
+          "description": "Unit tests for package initialization",
+          "spec_section": "Write unit tests for `src/workflow_platform/__init__.py`. Verify that `__all__` contains expected exports. Verify that importing `Config` from `workflow_platform` works correctly. Verify that importing `WorkflowEngine` from `workflow_platform` works correctly. Ensure no circular import errors occur.",
+          "depends_on": [
+            "src/workflow_platform/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/workflow_platform/config.py",
+          "description": "Configuration management and environment variables",
+          "spec_section": "Implement `Config` class to manage application settings. Use `pydantic.BaseSettings` for environment variable loading. Define fields for `SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, and `DEBUG`. Ensure `SECRET_KEY` defaults to a safe value in development. Add type hints for all configuration fields.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_config.py",
+          "description": "Unit tests for configuration management",
+          "spec_section": "Write unit tests for `src/workflow_platform/config.py`. Test `Config` class instantiation with default values. Test `Config` class instantiation with custom environment variables. Verify that `SECRET_KEY` is loaded correctly from environment. Verify that `DATABASE_URL` is loaded correctly from environment.",
+          "depends_on": [
+            "src/workflow_platform/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/workflow_platform/models.py",
+          "description": "Database models and ORM definitions",
+          "spec_section": "Define SQLAlchemy models for `Workflow`, `Step`, `AuditLog`, and `Outbox`. Ensure all tables include `organization_id` column for tenant isolation. Add indexes on `organization_id` and `created_at`. Define relationships between `Workflow` and `Step`. Use `Base` from `sqlalchemy.orm`.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_models.py",
+          "description": "Unit tests for database models",
+          "spec_section": "Write unit tests for `src/workflow_platform/models.py`. Verify `Workflow` model has `organization_id` column. Verify `Step` model has `organization_id` column. Verify `AuditLog` model has `organization_id` column. Verify `Outbox` model has `organization_id` column. Check that indexes are defined correctly on `organization_id`.",
+          "depends_on": [
+            "src/workflow_platform/models.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/workflow_platform/schemas.py",
+          "description": "Pydantic schemas for request/response validation",
+          "spec_section": "Define Pydantic schemas for `WorkflowCreate`, `WorkflowUpdate`, `StepStatus`, and `AuditEntry`. Ensure `organization_id` is included in all schemas. Add validation for `organization_id` format. Use `Field` for default values and constraints. Import `BaseModel` from `pydantic`.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_schemas.py",
+          "description": "Unit tests for Pydantic schemas",
+          "spec_section": "Write unit tests for `src/workflow_platform/schemas.py`. Test `WorkflowCreate` schema validation with valid data. Test `WorkflowCreate` schema validation with invalid `organization_id`. Test `StepStatus` schema validation. Test `AuditEntry` schema validation. Ensure serialization and deserialization work correctly.",
+          "depends_on": [
+            "src/workflow_platform/schemas.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 1,
+      "name": "Core Logic and Services",
+      "tasks": [
+        {
+          "file": "src/workflow_platform/auth.py",
+          "description": "JWT authentication and authorization logic",
+          "spec_section": "Implement `AuthException` class for authentication errors. Implement `create_access_token` function to generate JWT tokens with `subject` and `organization_id`. Implement `verify_token` function to decode and validate JWT tokens. Import `jwt` from `jwt` and `JWTError` from `jose`. Raise `AuthException` on invalid tokens.",
+          "depends_on": [
+            "src/workflow_platform/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_auth.py",
+          "description": "Unit tests for authentication logic",
+          "spec_section": "Write unit tests for `src/workflow_platform/auth.py`. Test `create_access_token` returns a valid string token. Test `verify_token` returns payload for valid token. Test `verify_token` raises `AuthException` for invalid token. Test `verify_token` raises `AuthException` for expired token. Test `AuthException` is raised correctly.",
+          "depends_on": [
+            "src/workflow_platform/auth.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/workflow_platform/engine.py",
+          "description": "DAG execution engine and step management",
+          "spec_section": "Implement `StepStatus` enum with PENDING, RUNNING, SUCCESS, FAILED, COMPENSATING. Implement `WorkflowEngine` class with `execute_dag` method. Implement `_execute_step` helper method. Handle empty DAG definitions. Raise `ValueError` on missing step IDs. Import `Enum` from `enum` and `Dict` from `typing`.",
+          "depends_on": [
+            "src/workflow_platform/models.py",
+            "src/workflow_platform/schemas.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_engine.py",
+          "description": "Unit tests for workflow engine",
+          "spec_section": "Write unit tests for `src/workflow_platform/engine.py`. Test `WorkflowEngine.execute_dag` with empty steps list. Test `WorkflowEngine.execute_dag` with single step. Test `WorkflowEngine.execute_dag` raises `ValueError` on missing step ID. Test `StepStatus` enum values. Verify execution results structure.",
+          "depends_on": [
+            "src/workflow_platform/engine.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/workflow_platform/queues.py",
+          "description": "Redis queue management and rate limiting",
+          "spec_section": "Implement `QueueManager` class for Redis interaction. Implement `enqueue` method to add tasks to queue. Implement `dequeue` method to retrieve tasks. Implement `rate_limit` method using sliding window algorithm. Import `redis` client. Handle connection errors gracefully.",
+          "depends_on": [
+            "src/workflow_platform/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_queues.py",
+          "description": "Unit tests for queue management",
+          "spec_section": "Write unit tests for `src/workflow_platform/queues.py`. Test `QueueManager.enqueue` adds item to queue. Test `QueueManager.dequeue` retrieves item from queue. Test `QueueManager.rate_limit` blocks when limit exceeded. Test `QueueManager` handles Redis connection errors. Verify queue operations are atomic.",
+          "depends_on": [
+            "src/workflow_platform/queues.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/workflow_platform/outbox.py",
+          "description": "Outbox pattern for reliable event publishing",
+          "spec_section": "Implement `OutboxManager` class for event publishing. Implement `publish_event` method to store events in outbox table. Implement `poll_outbox` method to retrieve pending events. Implement `retry_publish` method for failed events. Import `models` and `schemas` for type hints.",
+          "depends_on": [
+            "src/workflow_platform/models.py",
+            "src/workflow_platform/schemas.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_outbox.py",
+          "description": "Unit tests for outbox pattern",
+          "spec_section": "Write unit tests for `src/workflow_platform/outbox.py`. Test `OutboxManager.publish_event` stores event in database. Test `OutboxManager.poll_outbox` retrieves pending events. Test `OutboxManager.retry_publish` handles failed events. Verify outbox table structure matches models.",
+          "depends_on": [
+            "src/workflow_platform/outbox.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/workflow_platform/audit.py",
+          "description": "Immutable audit logging system",
+          "spec_section": "Implement `AuditLogger` class for recording state changes. Implement `log_action` method with `user_id`, `action`, `timestamp`, and `payload`. Ensure logs are immutable. Import `datetime` for timestamps. Import `models` for database interaction. Validate input data before logging.",
+          "depends_on": [
+            "src/workflow_platform/models.py",
+            "src/workflow_platform/schemas.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_audit.py",
+          "description": "Unit tests for audit logging",
+          "spec_section": "Write unit tests for `src/workflow_platform/audit.py`. Test `AuditLogger.log_action` records entry in database. Test `AuditLogger.log_action` validates `user_id`. Test `AuditLogger.log_action` validates `action`. Verify timestamp is recorded correctly. Ensure logs are immutable after creation.",
+          "depends_on": [
+            "src/workflow_platform/audit.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/workflow_platform/webhooks.py",
+          "description": "Webhook ingestion and HMAC verification",
+          "spec_section": "Implement `WebhookHandler` class for processing webhooks. Implement `verify_signature` method using HMAC. Implement `process_webhook` method with idempotency check. Import `auth` for `AuthException`. Import `schemas` for payload validation. Raise `AuthException` on invalid signature.",
+          "depends_on": [
+            "src/workflow_platform/auth.py",
+            "src/workflow_platform/schemas.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_webhooks.py",
+          "description": "Unit tests for webhook ingestion",
+          "spec_section": "Write unit tests for `src/workflow_platform/webhooks.py`. Test `WebhookHandler.verify_signature` returns True for valid HMAC. Test `WebhookHandler.verify_signature` returns False for invalid HMAC. Test `WebhookHandler.process_webhook` handles idempotency. Verify `AuthException` is raised on invalid signature.",
+          "depends_on": [
+            "src/workflow_platform/webhooks.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/workflow_platform/dependencies.py",
+          "description": "FastAPI dependency injection setup",
+          "spec_section": "Implement `get_current_user` dependency for JWT verification. Implement `get_db` dependency for database session. Implement `get_tenant` dependency for organization isolation. Import `auth` for token verification. Import `config` for settings. Raise `HTTPException` on auth failure.",
+          "depends_on": [
+            "src/workflow_platform/auth.py",
+            "src/workflow_platform/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_dependencies.py",
+          "description": "Unit tests for dependency injection",
+          "spec_section": "Write unit tests for `src/workflow_platform/dependencies.py`. Test `get_current_user` returns user dict for valid token. Test `get_current_user` raises `HTTPException` for invalid token. Test `get_db` returns database session. Test `get_tenant` validates organization_id. Verify dependency injection works correctly.",
+          "depends_on": [
+            "src/workflow_platform/dependencies.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/workflow_platform/cli.py",
+          "description": "Command-line interface for administration",
+          "spec_section": "Implement CLI commands: `migrate`, `seed`, `replay`, `reconcile`. Use `click` library for CLI definition. Import `engine` for workflow execution. Import `outbox` for event management. Import `audit` for logging. Handle command arguments and errors gracefully.",
+          "depends_on": [
+            "src/workflow_platform/engine.py",
+            "src/workflow_platform/outbox.py",
+            "src/workflow_platform/audit.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_cli.py",
+          "description": "Unit tests for CLI tools",
+          "spec_section": "Write unit tests for `src/workflow_platform/cli.py`. Test `migrate` command executes successfully. Test `seed` command populates database. Test `replay` command replays events. Test `reconcile` command fixes inconsistencies. Verify CLI arguments are parsed correctly. Ensure error messages are clear.",
+          "depends_on": [
+            "src/workflow_platform/cli.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Application Entry Point",
+      "tasks": [
+        {
+          "file": "src/workflow_platform/main.py",
+          "description": "FastAPI application entry point",
+          "spec_section": "Implement `FastAPI` application instance. Register `dependencies` for authentication. Register `webhooks` routes. Register `engine` routes. Register `audit` routes. Configure middleware for OpenTelemetry and Prometheus. Import `dependencies`, `webhooks`, `engine`, `audit` modules. Handle startup and shutdown events.",
+          "depends_on": [
+            "src/workflow_platform/dependencies.py",
+            "src/workflow_platform/webhooks.py",
+            "src/workflow_platform/engine.py",
+            "src/workflow_platform/audit.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_main.py",
+          "description": "Unit tests for application entry point",
+          "spec_section": "Write unit tests for `src/workflow_platform/main.py`. Test `FastAPI` app instance creation. Test `dependencies` are registered correctly. Test `webhooks` routes are registered. Test `engine` routes are registered. Test `audit` routes are registered. Verify middleware configuration.",
+          "depends_on": [
+            "src/workflow_platform/main.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    }
+  ]
+}

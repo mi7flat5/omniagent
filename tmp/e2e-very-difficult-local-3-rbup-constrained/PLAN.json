@@ -1,0 +1,353 @@
+{
+  "phases": [
+    {
+      "phase": 0,
+      "name": "Foundations & Infrastructure",
+      "tasks": [
+        {
+          "file": "src/__init__.py",
+          "description": "Initialize the src package.",
+          "spec_section": "Define the package surface for absolute imports.\n\n__all__ = [\n    'api',\n    'core',\n    'engine',\n    'infrastructure',\n    'workers'\n]",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_src_init.py",
+          "description": "Test src package initialization.",
+          "spec_section": "from src import api, core, engine, infrastructure, workers\n\ndef test_src_imports():\n    assert api is not None\n    assert core is not None\n    assert engine is not None\n    assert infrastructure is not None\n    assert workers is not None",
+          "depends_on": [
+            "src/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/core/exceptions.py",
+          "description": "Define custom exception hierarchy.",
+          "spec_section": "Define the following exception classes: \nclass WorkflowError(Exception): Base exception.\nclass TenantAccessDeniedError(WorkflowError): Raised for scope violations.\nclass IdempotencyConflictError(WorkflowError): Raised for duplicate keys.\nclass StepExecutionError(WorkflowError): Raised when a DAG step fails after retries.\nclass DatabaseConnectionError(Exception): Raised when PostgreSQL is unreachable.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_core_exceptions.py",
+          "description": "Test custom exceptions.",
+          "spec_section": "Test that WorkflowError, TenantAccessDeniedError, IdempotencyConflictError, and StepExecutionError can be raised and caught correctly.",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/core/tenant.py",
+          "description": "Implement multi-tenancy context.",
+          "spec_section": "from dataclasses import dataclass\nfrom uuid import UUID\n\n@dataclass(frozen=True)\nclass TenantContext:\n    tenant_id: UUID\n    organization_id: UUID\n    role: str",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_core_tenant.py",
+          "description": "Test TenantContext.",
+          "spec_section": "Test the `TenantContext` dataclass creation, ensuring immutability (frozen=True) and correct attribute assignment for tenant_id, organization_id, and role.",
+          "depends_on": [
+            "src/core/tenant.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/infrastructure/database.py",
+          "description": "PostgreSQL connection and Outbox implementation.",
+          "spec_section": "from src.core.exceptions import DatabaseConnectionError\n\nclass Database:\n    def __init__(self, connection_string: str):\n        self.connection_string = connection_string\n    \n    async def execute(self, query: str, params: dict = None) -> list:\n        # Implementation logic\n        pass\n\n    async def insert_outbox_event(self, event_type: str, payload: dict):\n        # Implementation logic\n        pass",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_infrastructure_db.py",
+          "description": "Test database connectivity and Outbox.",
+          "spec_section": "from src.infrastructure.database import Database\n\nasync def test_database_outbox_insertion():\n    # Test the ability to insert/retrieve records from the Outbox table using Database.insert_outbox_event.",
+          "depends_on": [
+            "src/infrastructure/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/infrastructure/redis.py",
+          "description": "Redis client for rate limiting and idempotency.",
+          "spec_section": "Implement a Redis client wrapper to handle distributed locking, sliding-window rate limiting, and idempotency key storage using SET NX EX patterns.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_infrastructure_redis.py",
+          "description": "Test Redis operations.",
+          "spec_section": "Test the Redis client's ability to set idempotency keys with expiration and implement rate limiting logic.",
+          "depends_on": [
+            "src/infrastructure/redis.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_api_init.py",
+          "description": "Test api package initialization.",
+          "spec_section": "from src import api\n\ndef test_api_imports():\n    assert api is not None",
+          "depends_on": [
+            "src/api/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_core_init.py",
+          "description": "Test core package initialization.",
+          "spec_section": "from src import core\n\ndef test_core_imports():\n    assert core is not None",
+          "depends_on": [
+            "src/core/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_engine_init.py",
+          "description": "Test engine package initialization.",
+          "spec_section": "from src import engine\n\ndef test_engine_imports():\n    assert engine is not None",
+          "depends_on": [
+            "src/engine/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_infrastructure_init.py",
+          "description": "Test infrastructure package initialization.",
+          "spec_section": "from src import infrastructure\n\ndef test_infrastructure_imports():\n    assert infrastructure is not None",
+          "depends_on": [
+            "src/infrastructure/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_workers_init.py",
+          "description": "Test workers package initialization.",
+          "spec_section": "from src import workers\n\ndef test_workers_imports():\n    assert workers is not None",
+          "depends_on": [
+            "src/workers/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 1,
+      "name": "Core Logic & Engine",
+      "tasks": [
+        {
+          "file": "src/core/security.py",
+          "description": "JWT and RBAC implementation.",
+          "spec_section": "Implement JWT generation and verification. Include logic for Role-Based Access Control (RBAC) checking against the roles: Admin, Operator, User. Use `from src.core.tenant import TenantContext` for context validation.",
+          "depends_on": [
+            "src/core/tenant.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_core_security.py",
+          "description": "Test security logic.",
+          "spec_section": "from src.core.security import verify_jwt, check_rbac\nfrom src.core.tenant import TenantContext\n\ndef test_jwt_verification():\n    # Test token generation and validation\n    pass\n\ndef test_rbac_enforcement():\n    # Test role checks for Admin, Operator, User\n    pass",
+          "depends_on": [
+            "src/core/security.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/engine/models.py",
+          "description": "Define workflow and step models.",
+          "spec_section": "Define the data structures for Workflows, DAG nodes, and execution history. Use `from uuid import UUID` and `from datetime import datetime`.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_engine_models.py",
+          "description": "Test engine models.",
+          "spec_section": "from src.engine.models import Workflow, StepModel\nfrom uuid import uuid4\n\ndef test_workflow_creation():\n    # Test instantiation of Workflow and StepModel\n    pass",
+          "depends_on": [
+            "src/engine/models.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/infrastructure/queue.py",
+          "description": "Distributed queue implementation.",
+          "spec_section": "Implement a queue interface that uses Redis to manage distributed tasks for the worker system.\n\nclass Queue:\n    def __init__(self, redis_client: Any):\n        self.redis = redis_client\n    async def enqueue(self, queue_name: str, payload: dict) -> None: ...\n    async def dequeue(self, queue_name: str) -> Optional[dict]: ...",
+          "depends_on": [
+            "src/infrastructure/redis.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_infrastructure_queue.py",
+          "description": "Test queue operations.",
+          "spec_section": "from src.infrastructure.queue import Queue\n\nasync def test_enqueue_dequeue():\n    # Test the enqueue and dequeue operations of the distributed Queue class.",
+          "depends_on": [
+            "src/infrastructure/queue.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/engine/dag.py",
+          "description": "DAG structure and validation.",
+          "spec_section": "Implement a Directed Acyclic Graph (DAG) class. Include a `validate()` method to check for circular dependencies. Use `from src.engine.models import Step`.",
+          "depends_on": [
+            "src/engine/models.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_engine_dag.py",
+          "description": "Test DAG validation.",
+          "spec_section": "Test the `DAG.validate` method to ensure it correctly identifies circular dependencies and valid acyclic graphs.",
+          "depends_on": [
+            "src/engine/dag.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/engine/executor.py",
+          "description": "Workflow execution engine.",
+          "spec_section": "Implement `DAGExecutor`. \nclass DAGExecutor:\n    def __init__(self, tenant_id: UUID, max_retries: int = 3):\n        self.tenant_id = tenant_id\n        self.max_retries = max_retries\n    def run_step_with_retry(self, step: Step, context: Dict[str, Any]) -> Dict[str, Any]: ...\n    def execute_workflow(self, dag_nodes: List[Step], initial_context: Dict[str, Any]) -> Dict[str, Any]: ...\nImport `from src.core.exceptions import StepExecutionError`.",
+          "depends_on": [
+            "src/engine/dag.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_engine_executor.py",
+          "description": "Test executor logic.",
+          "spec_section": "Test the `DAGExecutor.execute_workflow` method, specifically validating retry logic with exponential backoff and the execution of compensating actions when a step fails.",
+          "depends_on": [
+            "src/engine/executor.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "API & Webhooks",
+      "tasks": [
+        {
+          "file": "src/api/auth.py",
+          "description": "Authentication endpoints.",
+          "spec_section": "Implement FastAPI endpoints for user login and identity verification. Use `from src.core.security import verify_jwt` and `from src.core.tenant import TenantContext`.",
+          "depends_on": [
+            "src/core/security.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_api_auth.py",
+          "description": "Test auth endpoints.",
+          "spec_section": "Test the full JWT flow: `POST /api/auth/login` to receive a token, and `GET /api/auth/me` using that token to verify identity.",
+          "depends_on": [
+            "src/api/auth.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/api/webhooks.py",
+          "description": "Secure webhook ingestion.",
+          "spec_section": "Implement `WebhookHandler`. \nclass WebhookHandler:\n    def __init__(self, secret_key: str, redis_client: Any): ...\n    async def verify_signature(self, payload: bytes, signature: str) -> bool: ...\n    async def process_webhook(self, request: Request, x_signature: str, x_idempotency_key: str) -> Dict[str, Any]: ...\nImport `from src.core.exceptions import IdempotencyConflictError`.",
+          "depends_on": [
+            "src/infrastructure/redis.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_api_webhooks.py",
+          "description": "Test webhook security.",
+          "spec_section": "Test the `WebhookHandler.verify_signature` method with valid and invalid HMAC signatures, and test `process_webhook` to ensure it raises `IdempotencyConflictError` when the same key is used twice.",
+          "depends_on": [
+            "src/api/webhooks.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Workers & Integration",
+      "tasks": [
+        {
+          "file": "src/workers/outbox_worker.py",
+          "description": "Outbox pattern worker.",
+          "spec_section": "Implement a worker that polls the Outbox table in PostgreSQL and pushes events to the Redis-backed queue. Use `from src.infrastructure.database import Database` and `from src.infrastructure.queue import Queue`.",
+          "depends_on": [
+            "src/infrastructure/database.py",
+            "src/infrastructure/queue.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_workers_outbox.py",
+          "description": "Test outbox worker.",
+          "spec_section": "Test the `OutboxWorker` by mocking the database and queue to ensure it correctly picks up pending events and dispatches them.",
+          "depends_on": [
+            "src/workers/outbox_worker.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/api/routes.py",
+          "description": "Main API routing.",
+          "spec_section": "Implement the main FastAPI router that aggregates all sub-routers (auth, webhooks, etc.). Use `from fastapi import APIRouter`.",
+          "depends_on": [
+            "src/api/auth.py",
+            "src/api/webhooks.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_api_routes.py",
+          "description": "Test API routing.",
+          "spec_section": "from fastapi.testclient import TestClient\nfrom src.api.routes import router\n\nasync def test_router_registration():\n    # Test that the main router correctly routes requests to the appropriate sub-modules.",
+          "depends_on": [
+            "src/api/routes.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    }
+  ]
+}

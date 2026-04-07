@@ -982,6 +982,13 @@ std::vector<std::unique_ptr<Tool>> make_default_workspace_tools() {
     tools.push_back(std::make_unique<GrepTool>());
     tools.push_back(std::make_unique<BashTool>());
     tools.push_back(std::make_unique<ListDirTool>());
+    tools.push_back(std::make_unique<WebFetchTool>());
+    tools.push_back(std::make_unique<WebSearchTool>());
+    tools.push_back(std::make_unique<PlannerValidateSpecTool>());
+    tools.push_back(std::make_unique<PlannerValidatePlanTool>());
+    tools.push_back(std::make_unique<PlannerRepairPlanTool>());
+    tools.push_back(std::make_unique<PlannerBuildPlanTool>());
+    tools.push_back(std::make_unique<PlannerBuildFromIdeaTool>());
     return tools;
 }
 

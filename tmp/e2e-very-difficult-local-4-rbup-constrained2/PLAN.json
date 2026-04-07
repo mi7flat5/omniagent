@@ -1,0 +1,314 @@
+{
+  "phases": [
+    {
+      "phase": 0,
+      "name": "Base Layer & Core Infrastructure",
+      "tasks": [
+        {
+          "file": "src/core/config.py",
+          "description": "Configuration management for the application.",
+          "spec_section": "Implement a `Settings` class using Pydantic to manage environment variables including DATABASE_URL, REDIS_URL, JWT_SECRET, and HMAC_SECRET. Must include validation for required fields.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_core_config.py",
+          "description": "Unit tests for configuration loading.",
+          "spec_section": "Test the `Settings` class to ensure it correctly loads environment variables and raises validation errors when required fields like `JWT_SECRET` are missing.",
+          "depends_on": [
+            "src/core/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/core/exceptions.py",
+          "description": "Custom exception hierarchy.",
+          "spec_section": "Define the following exception classes: `WorkflowError(Exception)`, `DependencyError(WorkflowError)`, `TenantIsolationError(Exception)`, `AuthenticationError(Exception)`, `SignatureError(Exception)`, and `IdempotencyError(Exception)`.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_core_exceptions.py",
+          "description": "Unit tests for custom exceptions.",
+          "spec_section": "Test that `DependencyError` is a subclass of `WorkflowError` and that all custom exceptions can be raised and caught correctly.",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/core/__init__.py",
+          "description": "Core package initialization.",
+          "spec_section": "Expose `WorkflowError`, `DependencyError`, `TenantIsolationError`, `AuthenticationError`, `SignatureError`, and `IdempotencyError` at the package level.",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_core_init.py",
+          "description": "Tests for core package init.",
+          "spec_section": "Verify that the core package correctly exports the defined exception classes.",
+          "depends_on": [
+            "src/core/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/engine/models.py",
+          "description": "Data models for the workflow engine.",
+          "spec_section": "Define `TaskStatus` Enum (SUCCESS, FAILURE, RUNNING, PENDING) and `TaskNode` dataclass: `TaskNode(id: str, dependencies: List[str], payload: Dict[str, Any])`.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_engine_models.py",
+          "description": "Unit tests for engine models.",
+          "spec_section": "Test the `TaskNode` dataclass instantiation and the `TaskStatus` Enum values.",
+          "depends_on": [
+            "src/engine/models.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/webhooks/verifier.py",
+          "description": "HMAC signature verification logic.",
+          "spec_section": "Implement `WebhookVerifier` class with `verify_signature(self, payload: bytes, signature: str) -> bool`. Use `hmac.compare_digest` and raise `SignatureError` from `src.core.exceptions` if verification fails.",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/webhooks/__init__.py",
+          "description": "Webhooks package initialization.",
+          "spec_section": "Expose `WebhookVerifier` and `SignatureError` at the package level.",
+          "depends_on": [
+            "src/webhooks/verifier.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_webhooks_init.py",
+          "description": "Tests for webhooks package init.",
+          "spec_section": "Verify that the webhooks package correctly exports `WebhookVerifier`.",
+          "depends_on": [
+            "src/webhooks/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/auth/__init__.py",
+          "description": "Auth package initialization.",
+          "spec_section": "Expose `security` and `dependencies` modules at the package level.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_auth_init.py",
+          "description": "Tests for auth package init.",
+          "spec_section": "Verify that the auth package correctly exports its submodules.",
+          "depends_on": [
+            "src/auth/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/engine/__init__.py",
+          "description": "Engine package initialization.",
+          "spec_section": "Expose `dag`, `executor`, and `models` at the package level.",
+          "depends_on": [
+            "src/engine/models.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_engine_init.py",
+          "description": "Tests for engine package init.",
+          "spec_section": "Verify that the engine package correctly exports its submodules.",
+          "depends_on": [
+            "src/engine/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/webhooks/__init__.py",
+          "description": "Webhooks package initialization.",
+          "spec_section": "Expose `handler` and `verifier` at the package level.",
+          "depends_on": [
+            "src/webhooks/verifier.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_webhooks_init.py",
+          "description": "Tests for webhooks package init.",
+          "spec_section": "Verify that the webhooks package correctly exports its submodules.",
+          "depends_on": [
+            "src/webhooks/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/__init__.py",
+          "description": "Tests package initialization.",
+          "spec_section": "Initialize the tests package.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_tests_init.py",
+          "description": "Tests for tests package init.",
+          "spec_section": "Verify that the tests package is correctly initialized.",
+          "depends_on": [
+            "tests/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 1,
+      "name": "Logic & Engine Implementation",
+      "tasks": [
+        {
+          "file": "src/auth/security.py",
+          "description": "JWT and RBAC security logic.",
+          "spec_section": "Implement `create_access_token(data: dict, secret: str, expires_delta: timedelta) -> str` and `verify_token(token: str, secret: str) -> dict`. Must handle `AuthenticationError`.",
+          "depends_on": [
+            "src/core/exceptions.py",
+            "src/core/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/auth/dependencies.py",
+          "description": "FastAPI dependency injection for auth.",
+          "spec_section": "Implement `get_current_user(token: str)` and `require_role(role: str)` dependencies. Use `from src.auth.security import verify_token` and `from src.core.exceptions import AuthenticationError`.",
+          "depends_on": [
+            "src/auth/security.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/engine/dag.py",
+          "description": "DAG structure and validation.",
+          "spec_section": "Implement `DAG` class with `add_node(node: TaskNode)` and `get_node(node_id: str) -> TaskNode`. Must include cycle detection logic and raise `DependencyError` if a cycle is found.",
+          "depends_on": [
+            "src/engine/models.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/engine/executor.py",
+          "description": "Workflow execution engine.",
+          "spec_section": "Implement `WorkflowExecutor` class with `execute_step(node_id: str) -> TaskStatus` and `run_all() -> Dict[str, TaskStatus]`. Must use `from src.engine.models import TaskNode, TaskStatus` and `from src.engine.dag import DAG`.",
+          "depends_on": [
+            "src/engine/dag.py",
+            "src/engine/models.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/webhooks/handler.py",
+          "description": "Webhook ingestion and idempotency.",
+          "spec_section": "Implement `ingest_webhook(payload: bytes, signature: str, idempotency_key: str) -> dict`. Must use `from src.webhooks.verifier import WebhookVerifier` and handle `IdempotencyError`.",
+          "depends_on": [
+            "src/webhooks/verifier.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_auth.py",
+          "description": "Integration tests for authentication.",
+          "spec_section": "Test `src.auth.security.create_access_token` and verify that tokens generated are valid and expired tokens raise `AuthenticationError`.",
+          "depends_on": [
+            "src/auth/security.py",
+            "src/auth/dependencies.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_engine.py",
+          "description": "Unit tests for the workflow engine.",
+          "spec_section": "Test `WorkflowExecutor.execute_step` with satisfied and unsatisfied dependencies, and test `DAG` cycle detection.",
+          "depends_on": [
+            "src/engine/executor.py",
+            "src/engine/dag.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_webhooks.py",
+          "description": "Unit tests for webhook handling.",
+          "spec_section": "Test `WebhookVerifier.verify_signature` with valid/invalid signatures and `ingest_webhook` for idempotency.",
+          "depends_on": [
+            "src/webhooks/handler.py",
+            "src/webhooks/verifier.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Application Entry Point",
+      "tasks": [
+        {
+          "file": "src/main.py",
+          "description": "FastAPI application entry point.",
+          "spec_section": "Initialize FastAPI app. Define routes for `/api/webhooks` and `/api/protected`. Integrate `get_current_user` and `require_role` dependencies. Use `from src.core.config import Settings`.",
+          "depends_on": [
+            "src/auth/dependencies.py",
+            "src/engine/executor.py",
+            "src/webhooks/handler.py",
+            "src/core/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_main.py",
+          "description": "End-to-end tests for the API.",
+          "spec_section": "Test the `/api/protected` endpoint with valid and invalid JWTs, and the `/api/webhooks` endpoint with valid signatures.",
+          "depends_on": [
+            "src/main.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    }
+  ]
+}

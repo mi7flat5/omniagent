@@ -1,0 +1,418 @@
+{
+  "phases": [
+    {
+      "phase": 0,
+      "name": "Base Infrastructure and Core Exceptions",
+      "tasks": [
+        {
+          "file": "src/__init__.py",
+          "description": "Initialize the src package.",
+          "spec_section": "Expose core modules: `from src.core import exceptions, security, config`. This file serves as the entry point for the `src` package structure.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_src_init.py",
+          "description": "Test src package initialization.",
+          "spec_section": "Verify that `src` can be imported and that `src.core.exceptions.WebhookError`, `src.core.security.verify_hmac_signature`, and `src.core.config.Settings` are accessible. \n\n```python\nimport src\nfrom src.core.exceptions import WebhookError\nfrom src.core.security import verify_hmac_signature\nfrom src.core.config import Settings\n```",
+          "depends_on": [
+            "src/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/api/__init__.py",
+          "description": "Initialize the api package.",
+          "spec_section": "Expose API routers: `from src.api.ingest import router as ingest_router`, `from src.api.admin import router as admin_router`. This file facilitates access to the `src.api` sub-package.",
+          "depends_on": [
+            "src/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_api_init.py",
+          "description": "Test api package initialization.",
+          "spec_section": "Verify that `src.api` can be imported and that `src.api.ingest.router` and `src.api.admin.router` are accessible. \n\n```python\nimport src.api\nfrom src.api.ingest import router as ingest_router\nfrom src.api.admin import router as admin_router\n```",
+          "depends_on": [
+            "src/api/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/core/__init__.py",
+          "description": "Initialize the core package.",
+          "spec_section": "Expose core components: `from src.core import config, exceptions, security`. This file facilitates access to the `src.core` sub-package.",
+          "depends_on": [
+            "src/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_core_init.py",
+          "description": "Test core package initialization.",
+          "spec_section": "Verify that `src.core` can be imported and that `src.core.config.Settings`, `src.core.exceptions.WebhookError`, and `src.core.security.verify_hmac_signature` are accessible. \n\n```python\nimport src.core\nfrom src.core.config import Settings\nfrom src.core.exceptions import WebhookError\nfrom src.core.security import verify_hmac_signature\n```",
+          "depends_on": [
+            "src/core/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/models/__init__.py",
+          "description": "Initialize the models package.",
+          "spec_section": "Expose models: `from src.models import database, schemas`. This file facilitates access to the `src.models` sub-package.",
+          "depends_on": [
+            "src/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_models_init.py",
+          "description": "Test models package initialization.",
+          "spec_section": "Verify that `src.models` can be imported and that `src.models.database.get_db` and `src.models.schemas.WebhookPayload` are accessible. \n\n```python\nimport src.models\nfrom src.models.database import get_db\nfrom src.models.schemas import WebhookPayload\n```",
+          "depends_on": [
+            "src/models/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/services/__init__.py",
+          "description": "Initialize the services package.",
+          "spec_section": "Expose services: `from src.services import dispatcher, retry_manager`. This file facilitates access to the `src.services` sub-package.",
+          "depends_on": [
+            "src/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_services_init.py",
+          "description": "Test services package initialization.",
+          "spec_section": "Verify that `src.services` can be imported and that `src.services.dispatcher.WebhookDispatcher` and `src.services.retry_manager.RetryManager` are accessible. \n\n```python\nimport src.services\nfrom src.services.dispatcher import WebhookDispatcher\nfrom src.services.retry_manager import RetryManager\n```",
+          "depends_on": [
+            "src/services/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/worker/__init__.py",
+          "description": "Initialize the worker package.",
+          "spec_section": "Expose worker components: `from src.worker import task_processor`. This file facilitates access to the `src.worker` sub-package.",
+          "depends_on": [
+            "src/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_worker_init.py",
+          "description": "Test worker package initialization.",
+          "spec_section": "Verify that `src.worker` can be imported and that `src.worker.task_processor.TaskProcessor` is accessible. \n\n```python\nimport src.worker\nfrom src.worker.task_processor import TaskProcessor\n```",
+          "depends_on": [
+            "src/worker/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/__init__.py",
+          "description": "Initialize the tests package.",
+          "spec_section": "Initialize the tests directory as a Python package to allow relative imports within the tests suite.",
+          "depends_on": [
+            "src/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_tests_init.py",
+          "description": "Test tests package initialization.",
+          "spec_section": "Verify that the `tests` package can be imported correctly and that its submodules are accessible. \n\n```python\nimport tests\n```",
+          "depends_on": [
+            "tests/__init__.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/core/exceptions.py",
+          "description": "Define custom exceptions.",
+          "spec_section": "Define the following exception hierarchy: \nclass WebhookError(Exception): ... \nclass InvalidSignatureError(WebhookError): ... \nclass TenantNotFoundError(WebhookError): ... \nclass IdempotencyConflictError(WebhookError): ... \nclass DispatchError(WebhookError): ...",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_exceptions.py",
+          "description": "Test custom exceptions.",
+          "spec_section": "Verify that WebhookError, InvalidSignatureError, TenantNotFoundError, IdempotencyConflictError, and DispatchError can be raised and caught correctly. \n\n```python\nfrom src.core.exceptions import WebhookError, InvalidSignatureError, TenantNotFoundError, IdempotencyConflictError, DispatchError\n```",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/core/config.py",
+          "description": "Configuration management.",
+          "spec_section": "Implement a Settings class using Pydantic BaseSettings to manage environment variables like DATABASE_URL, SECRET_KEY, and RETRY_LIMIT. Requires `from pydantic_settings import BaseSettings`.",
+          "depends_on": [],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_config.py",
+          "description": "Test configuration loading.",
+          "spec_section": "Verify that the Settings class correctly loads values from environment variables and provides default values. \n\n```python\nfrom src.core.config import Settings\n```",
+          "depends_on": [
+            "src/core/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 1,
+      "name": "Core Logic and Data Models",
+      "tasks": [
+        {
+          "file": "src/core/security.py",
+          "description": "HMAC signature verification.",
+          "spec_section": "Implement `def verify_hmac_signature(payload: bytes, signature: str, secret: str, header_name: str = 'X-Hub-Signature-256') -> bool:`. It must use `hmac` and `hashlib.sha256` and raise `from webhook_relay.core.exceptions import InvalidSignatureError` if the signature is invalid.",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_security.py",
+          "description": "Test HMAC verification.",
+          "spec_section": "Test the `verify_hmac_signature` function from `src.core.security` with valid signatures, invalid signatures (expecting `from src.core.exceptions import InvalidSignatureError`), and different header names. \n\n```python\nfrom src.core.security import verify_hmac_signature\nfrom src.core.exceptions import InvalidSignatureError\n```",
+          "depends_on": [
+            "src/core/security.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/models/database.py",
+          "description": "Database connection and session management.",
+          "spec_section": "Implement SQLAlchemy engine and sessionmaker. Requires `from webhook_relay.core.config import Settings`. Define `get_db` generator for FastAPI dependency injection.",
+          "depends_on": [
+            "src/core/config.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_database.py",
+          "description": "Test database connectivity.",
+          "spec_section": "Verify that the `get_db` generator yields a valid SQLAlchemy session and that the engine can connect to a test database. \n\n```python\nfrom src.models.database import get_db\n```",
+          "depends_on": [
+            "src/models/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/models/schemas.py",
+          "description": "Pydantic models for API requests/responses.",
+          "spec_section": "Define Pydantic models: `WebhookPayload`, `TenantConfig`, `EventLog`, and `RetryState`. Requires `from pydantic import BaseModel, Field` and `from typing import Dict, Any`.",
+          "depends_on": [
+            "src/models/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_schemas.py",
+          "description": "Test Pydantic schemas.",
+          "spec_section": "Validate that `WebhookPayload`, `TenantConfig`, `EventLog`, and `RetryState` correctly parse valid JSON and reject invalid data. \n\n```python\nfrom src.models.schemas import WebhookPayload, TenantConfig, EventLog, RetryState\n```",
+          "depends_on": [
+            "src/models/schemas.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/services/dispatcher.py",
+          "description": "Webhook dispatching service.",
+          "spec_section": "Implement `class WebhookDispatcher`. It must have an `async def dispatch(self, url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> httpx.Response:` method. It must raise `from webhook_relay.core.exceptions import DispatchError` if the response status is not 2xx.",
+          "depends_on": [
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_dispatcher.py",
+          "description": "Test dispatcher service.",
+          "spec_section": "Test the `WebhookDispatcher.dispatch` method using a mocked `httpx.AsyncClient`. Verify it returns successful responses and raises `DispatchError` on non-2xx status codes or network errors. \n\n```python\nfrom src.services.dispatcher import WebhookDispatcher\nfrom src.core.exceptions import DispatchError\n```",
+          "depends_on": [
+            "src/services/dispatcher.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Services and Admin API",
+      "tasks": [
+        {
+          "file": "src/services/retry_manager.py",
+          "description": "Retry logic and backoff management.",
+          "spec_section": "Implement `class RetryManager`. It should calculate exponential backoff: `2^n` seconds. It must interact with `src/models/database.py` to update event status to `DLQ` after max retries. Requires `from webhook_relay.core.exceptions import DispatchError`.",
+          "depends_on": [
+            "src/core/exceptions.py",
+            "src/models/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_retry_logic.py",
+          "description": "Test retry manager logic.",
+          "spec_section": "Test the `RetryManager` to ensure it calculates the correct exponential backoff intervals and correctly transitions events to `DLQ` status after the maximum number of attempts. \n\n```python\nfrom src.services.retry_manager import RetryManager\n```",
+          "depends_on": [
+            "src/services/retry_manager.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/api/auth.py",
+          "description": "Authentication and security middleware/endpoints.",
+          "spec_section": "Implement authentication logic. Requires `from webhook_relay.core.security import verify_hmac_signature` and `from webhook_relay.core.exceptions import InvalidSignatureError`. This may include a dependency for verifying headers.",
+          "depends_on": [
+            "src/core/security.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_auth.py",
+          "description": "Test authentication logic.",
+          "spec_section": "Test the authentication mechanisms, specifically ensuring that `verify_hmac_signature` is correctly integrated and that `InvalidSignatureError` results in appropriate HTTP responses. \n\n```python\nfrom src.api.auth import auth_router\nfrom src.core.exceptions import InvalidSignatureError\n```",
+          "depends_on": [
+            "src/api/auth.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/api/admin.py",
+          "description": "Administrative API endpoints.",
+          "spec_section": "Implement `POST /admin/replay/{event_id}`. This endpoint must change an event status from `DLQ` back to `PENDING`. Requires `from webhook_relay.models.database import get_db` and `from webhook_relay.services.retry_manager import RetryManager`.",
+          "depends_on": [
+            "src/models/database.py",
+            "src/services/retry_manager.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_admin.py",
+          "description": "Test admin API.",
+          "spec_section": "Test the `POST /admin/replay/{event_id}` endpoint to ensure it successfully triggers a replay for events in the `DLQ`. \n\n```python\nfrom src.api.admin import router\n```",
+          "depends_on": [
+            "src/api/admin.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Ingestion and Worker Processing",
+      "tasks": [
+        {
+          "file": "src/api/ingest.py",
+          "description": "Webhook ingestion endpoint.",
+          "spec_section": "Implement `POST /ingest/{tenant_id}`. It must use `from webhook_relay.core.security import verify_hmac_signature` to validate payloads, check for idempotency using `Idempotency-Key` header (raising `from webhook_relay.core.exceptions import IdempotencyConflictError`), and save the event to the database using `from webhook_relay.models.database import get_db`.",
+          "depends_on": [
+            "src/core/security.py",
+            "src/models/database.py",
+            "src/models/schemas.py",
+            "src/core/exceptions.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_ingestion.py",
+          "description": "Test ingestion endpoint.",
+          "spec_section": "Test the `POST /ingest/{tenant_id}` endpoint for successful ingestion, invalid signatures, missing tenants, and duplicate idempotency keys. \n\n```python\nfrom src.api.ingest import router\n```",
+          "depends_on": [
+            "src/api/ingest.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "src/worker/task_processor.py",
+          "description": "Background worker for processing tasks.",
+          "spec_section": "Implement `class TaskProcessor`. It must process pending webhooks by calling `from webhook_relay.services.dispatcher import WebhookDispatcher` and managing retries via `from webhook_relay.services.retry_manager import RetryManager`. Requires `from webhook_relay.models.database import get_db`.",
+          "depends_on": [
+            "src/services/dispatcher.py",
+            "src/services/retry_manager.py",
+            "src/models/database.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_task_processor.py",
+          "description": "Test worker task processor.",
+          "spec_section": "Test the `TaskProcessor` to ensure it correctly picks up pending tasks, dispatches them, and handles both success and failure scenarios (including retries). \n\n```python\nfrom src.worker.task_processor import TaskProcessor\n```",
+          "depends_on": [
+            "src/worker/task_processor.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "Application Entrypoint",
+      "tasks": [
+        {
+          "file": "src/main.py",
+          "description": "FastAPI application entrypoint.",
+          "spec_section": "Initialize the FastAPI app and include routers from `src.api.ingest`, `src.api.auth`, and `src.api.admin`. Requires `from fastapi import FastAPI`.",
+          "depends_on": [
+            "src/api/ingest.py",
+            "src/api/auth.py",
+            "src/api/admin.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        },
+        {
+          "file": "tests/test_main.py",
+          "description": "Integration tests for the main app.",
+          "spec_section": "Perform high-level integration tests on the FastAPI application initialized in `src/main.py` to ensure all routes are correctly registered. \n\n```python\nfrom src.main import app\n```",
+          "depends_on": [
+            "src/main.py"
+          ],
+          "agent_type": "coder",
+          "test_strategy": "unit"
+        }
+      ]
+    }
+  ]
+}

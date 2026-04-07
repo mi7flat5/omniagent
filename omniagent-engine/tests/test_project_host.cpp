@@ -170,6 +170,39 @@ public:
     ToolCallResult call(const nlohmann::json&) override { return {"network", false}; }
 };
 
+class PHPlannerBuildTool : public Tool {
+public:
+    std::string name() const override { return "planner_build_plan"; }
+    std::string description() const override { return "Planner build tool"; }
+    nlohmann::json input_schema() const override { return {}; }
+    bool is_read_only() const override { return false; }
+    bool is_destructive() const override { return false; }
+    bool is_network() const override { return true; }
+    ToolCallResult call(const nlohmann::json&) override { return {"planner", false}; }
+};
+
+class PHPlannerRepairTool : public Tool {
+public:
+    std::string name() const override { return "planner_repair_plan"; }
+    std::string description() const override { return "Planner repair tool"; }
+    nlohmann::json input_schema() const override { return {}; }
+    bool is_read_only() const override { return false; }
+    bool is_destructive() const override { return false; }
+    bool is_network() const override { return true; }
+    ToolCallResult call(const nlohmann::json&) override { return {"planner repair", false}; }
+};
+
+class PHPlannerBuildFromIdeaTool : public Tool {
+public:
+    std::string name() const override { return "planner_build_from_idea"; }
+    std::string description() const override { return "Planner idea workflow tool"; }
+    nlohmann::json input_schema() const override { return {}; }
+    bool is_read_only() const override { return false; }
+    bool is_destructive() const override { return false; }
+    bool is_network() const override { return true; }
+    ToolCallResult call(const nlohmann::json&) override { return {"planner idea", false}; }
+};
+
 class PHToolTurnProvider : public LLMProvider {
 public:
     Usage complete(const CompletionRequest&, StreamCallback cb,
@@ -393,6 +426,106 @@ TEST_F(ProjectHostTest, ResumeSessionRestoresPersistedMessages) {
     EXPECT_EQ(snapshot.messages.size(), 2u);
 }
 
+TEST_F(ProjectHostTest, RewindMessagesRemovesTailAndPersists) {
+    auto host = ProjectEngineHost::create(make_config(root_dir_, storage_dir_, provider_state_));
+
+    PHAutoApprove approvals;
+    PHRunObserver observer;
+
+    auto session = host->open_session(SessionOptions{
+        .profile = "bugfix",
+        .session_id = std::nullopt,
+        .working_dir_override = root_dir_ / "subdir",
+    });
+    auto first_run = session->submit_turn("first", observer, approvals);
+    first_run->wait();
+    auto second_run = session->submit_turn("second", observer, approvals);
+    second_run->wait();
+
+    EXPECT_EQ(session->snapshot().messages.size(), 4u);
+    EXPECT_EQ(session->rewind_messages(), 1u);
+    EXPECT_EQ(session->snapshot().messages.size(), 3u);
+    EXPECT_EQ(session->rewind_messages(10), 3u);
+    EXPECT_TRUE(session->snapshot().messages.empty());
+    EXPECT_EQ(session->rewind_messages(), 0u);
+
+    const auto session_id = session->session_id();
+    session->close();
+
+    auto resumed = host->resume_session(session_id);
+    EXPECT_TRUE(resumed->snapshot().messages.empty());
+}
+
+TEST_F(ProjectHostTest, RewindMessagesRejectsActiveRun) {
+    provider_state_->blocking = true;
+    auto host = ProjectEngineHost::create(make_config(root_dir_, storage_dir_, provider_state_));
+
+    PHAutoApprove approvals;
+    PHRunObserver observer;
+
+    auto session = host->open_session();
+    auto run = session->submit_turn("hold", observer, approvals);
+    {
+        std::unique_lock<std::mutex> lock(provider_state_->mutex);
+        provider_state_->started_cv.wait(lock, [this]() { return provider_state_->started; });
+    }
+
+    EXPECT_THROW(session->rewind_messages(), std::runtime_error);
+
+    run->cancel();
+    {
+        std::lock_guard<std::mutex> lock(provider_state_->mutex);
+        provider_state_->released = true;
+    }
+    provider_state_->release_cv.notify_all();
+    run->wait();
+}
+
+TEST_F(ProjectHostTest, ForkSessionClonesMessagesAndPreservesContext) {
+    auto host = ProjectEngineHost::create(make_config(root_dir_, storage_dir_, provider_state_));
+
+    PHAutoApprove approvals;
+    PHRunObserver observer;
+
+    auto source = host->open_session(SessionOptions{
+        .profile = "bugfix",
+        .session_id = std::nullopt,
+        .working_dir_override = root_dir_ / "subdir",
+    });
+    auto source_run = source->submit_turn("source turn", observer, approvals);
+    source_run->wait();
+
+    const auto source_snapshot = source->snapshot();
+    auto forked = host->fork_session(source->session_id());
+    const auto fork_snapshot = forked->snapshot();
+
+    EXPECT_NE(forked->session_id(), source->session_id());
+    EXPECT_EQ(fork_snapshot.messages.size(), source_snapshot.messages.size());
+    EXPECT_EQ(fork_snapshot.active_profile, source_snapshot.active_profile);
+    EXPECT_EQ(fork_snapshot.working_dir, source_snapshot.working_dir);
+
+    auto fork_run = forked->submit_turn("fork only", observer, approvals);
+    fork_run->wait();
+
+    EXPECT_EQ(source->snapshot().messages.size(), source_snapshot.messages.size());
+    EXPECT_GT(forked->snapshot().messages.size(), source_snapshot.messages.size());
+}
+
+TEST_F(ProjectHostTest, ForkSessionRejectsDuplicateExplicitSessionId) {
+    auto host = ProjectEngineHost::create(make_config(root_dir_, storage_dir_, provider_state_));
+
+    PHAutoApprove approvals;
+    PHRunObserver observer;
+
+    auto source = host->open_session();
+    auto source_run = source->submit_turn("source turn", observer, approvals);
+    source_run->wait();
+
+    SessionOptions options;
+    options.session_id = source->session_id();
+    EXPECT_THROW(host->fork_session(source->session_id(), options), std::runtime_error);
+}
+
 TEST_F(ProjectHostTest, RejectsWorkingDirectoryOutsideWorkspace) {
     auto host = ProjectEngineHost::create(make_config(root_dir_, storage_dir_, provider_state_));
     const auto outside = fs::temp_directory_path();
@@ -475,6 +608,42 @@ TEST_F(ProjectHostTest, RunCancelAndStopUpdateStatus) {
     EXPECT_EQ(stop_run->result().status, RunStatus::Stopped);
 }
 
+TEST_F(ProjectHostTest, HostDestructorFinalizesActiveRun) {
+    provider_state_->blocking = true;
+    auto host = ProjectEngineHost::create(make_config(root_dir_, storage_dir_, provider_state_));
+
+    PHAutoApprove approvals;
+    PHRunObserver observer;
+
+    auto session = host->open_session();
+    auto run = session->submit_turn("persist on shutdown", observer, approvals);
+    {
+        std::unique_lock<std::mutex> lock(provider_state_->mutex);
+        provider_state_->started_cv.wait(lock, [this]() { return provider_state_->started; });
+    }
+
+    std::thread destroy_host([&host]() {
+        host.reset();
+    });
+
+    {
+        std::lock_guard<std::mutex> lock(provider_state_->mutex);
+        provider_state_->released = true;
+    }
+    provider_state_->release_cv.notify_all();
+    destroy_host.join();
+
+    run->wait();
+    EXPECT_NE(run->result().status, RunStatus::Running);
+    EXPECT_NE(run->result().finished_at, std::chrono::system_clock::time_point{});
+
+    auto reloaded_host = ProjectEngineHost::create(make_config(root_dir_, storage_dir_, provider_state_));
+    auto persisted = reloaded_host->get_run(run->run_id());
+    ASSERT_TRUE(persisted.has_value());
+    EXPECT_NE(persisted->status, RunStatus::Running);
+    EXPECT_NE(persisted->finished_at, std::chrono::system_clock::time_point{});
+}
+
 TEST_F(ProjectHostTest, ProfileFilteringChangesVisibleTools) {
     auto host = ProjectEngineHost::create(make_config(root_dir_, storage_dir_, provider_state_));
     host->register_tool(std::make_unique<PHReadTool>());
@@ -501,6 +670,52 @@ TEST_F(ProjectHostTest, ProfileFilteringChangesVisibleTools) {
     const auto bugfix_tools = provider_state_->seen_tool_names.back();
     EXPECT_NE(std::find(bugfix_tools.begin(), bugfix_tools.end(), "ph_read"), bugfix_tools.end());
     EXPECT_NE(std::find(bugfix_tools.begin(), bugfix_tools.end(), "ph_write"), bugfix_tools.end());
+}
+
+TEST_F(ProjectHostTest, CoordinatorProfileOnlyExposesDelegationTools) {
+    auto host = ProjectEngineHost::create(make_config(root_dir_, storage_dir_, provider_state_));
+    host->register_tool(std::make_unique<PHReadTool>());
+    host->register_tool(std::make_unique<PHWriteTool>());
+    host->register_tool(std::make_unique<PHNetworkTool>());
+
+    PHAutoApprove approvals;
+    PHRunObserver observer;
+
+    auto session = host->open_session(SessionOptions{.profile = "coordinator"});
+    auto run = session->submit_turn("delegate this", observer, approvals);
+    run->wait();
+
+    ASSERT_FALSE(provider_state_->seen_tool_names.empty());
+    const auto coordinator_tools = provider_state_->seen_tool_names.back();
+    EXPECT_NE(std::find(coordinator_tools.begin(), coordinator_tools.end(), "agent"), coordinator_tools.end());
+    EXPECT_NE(std::find(coordinator_tools.begin(), coordinator_tools.end(), "send_message"), coordinator_tools.end());
+    EXPECT_EQ(std::find(coordinator_tools.begin(), coordinator_tools.end(), "ph_read"), coordinator_tools.end());
+    EXPECT_EQ(std::find(coordinator_tools.begin(), coordinator_tools.end(), "ph_write"), coordinator_tools.end());
+    EXPECT_EQ(std::find(coordinator_tools.begin(), coordinator_tools.end(), "ph_network"), coordinator_tools.end());
+}
+
+TEST_F(ProjectHostTest, PlanProfileAllowsPlannerToolsWithoutGenericNetworkAccess) {
+    auto host = ProjectEngineHost::create(make_config(root_dir_, storage_dir_, provider_state_));
+    host->register_tool(std::make_unique<PHReadTool>());
+    host->register_tool(std::make_unique<PHNetworkTool>());
+    host->register_tool(std::make_unique<PHPlannerRepairTool>());
+    host->register_tool(std::make_unique<PHPlannerBuildTool>());
+    host->register_tool(std::make_unique<PHPlannerBuildFromIdeaTool>());
+
+    PHAutoApprove approvals;
+    PHRunObserver observer;
+
+    auto session = host->open_session(SessionOptions{.profile = "plan"});
+    auto run = session->submit_turn("tools", observer, approvals);
+    run->wait();
+
+    ASSERT_FALSE(provider_state_->seen_tool_names.empty());
+    const auto plan_tools = provider_state_->seen_tool_names.back();
+    EXPECT_NE(std::find(plan_tools.begin(), plan_tools.end(), "ph_read"), plan_tools.end());
+    EXPECT_NE(std::find(plan_tools.begin(), plan_tools.end(), "planner_repair_plan"), plan_tools.end());
+    EXPECT_NE(std::find(plan_tools.begin(), plan_tools.end(), "planner_build_plan"), plan_tools.end());
+    EXPECT_NE(std::find(plan_tools.begin(), plan_tools.end(), "planner_build_from_idea"), plan_tools.end());
+    EXPECT_EQ(std::find(plan_tools.begin(), plan_tools.end(), "ph_network"), plan_tools.end());
 }
 
 TEST_F(ProjectHostTest, CustomProfilesApplyCapabilityPolicies) {

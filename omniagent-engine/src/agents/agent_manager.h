@@ -1,6 +1,8 @@
 #pragma once
 
 #include <omni/event.h>
+#include <omni/permission.h>
+#include <omni/tool.h>
 #include <omni/types.h>
 #include <atomic>
 #include <functional>
@@ -20,7 +22,9 @@ class PermissionDelegate;
 enum class AgentType {
     GeneralPurpose,  // Full tool access
     Explore,         // Read-only tools only
-    Plan,            // No file edit/write tools
+    Research,        // Read-only local + web research
+    Spec,            // Spec writing + validation workflow
+    Plan,            // Plan generation + validation workflow
 };
 
 struct AgentConfig {
@@ -53,6 +57,8 @@ public:
         AgentCompletionCallback on_complete = nullptr);
 
     /// Send a follow-up message to a running/completed agent.
+    /// If the agent currently has an in-flight turn, this waits for that turn
+    /// to settle before submitting the follow-up.
     /// Returns false if agent not found.
     bool send_message(const std::string& agent_id, const std::string& message);
 
@@ -69,10 +75,14 @@ public:
     /// Returns false if agent not found.
     bool wait_for(const std::string& agent_id) const;
 
+    /// Copy the parent session's workspace/tool context into future child agents.
+    void set_parent_tool_context(ToolContext context);
+
 private:
     Engine&             engine_;
     PermissionDelegate& delegate_;
     EventObserver&      observer_;
+    ToolContext         parent_tool_context_;
 
     struct AgentState {
         std::string                  id;
@@ -90,6 +100,8 @@ private:
     std::string generate_id();
     std::vector<std::string> filter_tools_for_type(AgentType type) const;
     std::string profile_name_for_type(AgentType type) const;
+    PermissionMode permission_mode_for_type(AgentType type) const;
+    std::string system_prompt_for_type(AgentType type) const;
 };
 
 }  // namespace omni::engine

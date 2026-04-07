@@ -126,6 +126,28 @@ TEST(StreamAssembler, AssemblesToolUseBlock) {
     EXPECT_EQ(tuc->input["expression"].get<std::string>(), "2+2");
 }
 
+TEST(StreamAssembler, ReconstructsStreamedToolJsonFragments) {
+    StreamAssembler sa;
+
+    sa.process(make_message_start());
+    sa.process(make_block_start_tool(0, "tool-frag", "read_file"));
+    sa.process(make_tool_input_delta(0, "{\"path\":\"README"));
+    sa.process(make_tool_input_delta(0, ".md\",\"start\":1}"));
+    sa.process(make_block_stop(0));
+    sa.process(make_message_stop());
+
+    auto blocks = sa.take_completed_blocks();
+    ASSERT_EQ(blocks.size(), 1u);
+
+    const auto* tuc = std::get_if<ToolUseContent>(&blocks[0].data);
+    ASSERT_NE(tuc, nullptr);
+    EXPECT_EQ(tuc->id, "tool-frag");
+    EXPECT_EQ(tuc->name, "read_file");
+    ASSERT_TRUE(tuc->input.is_object());
+    EXPECT_EQ(tuc->input["path"], "README.md");
+    EXPECT_EQ(tuc->input["start"], 1);
+}
+
 TEST(StreamAssembler, MixedBlocks) {
     StreamAssembler sa;
 
