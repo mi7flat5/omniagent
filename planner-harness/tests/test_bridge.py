@@ -92,6 +92,44 @@ def test_validate_plan_skip_adversary_returns_json(tmp_path):
     assert payload["stage"]["combined_score"] >= 0
 
 
+def test_validate_review_skip_adversary_returns_json():
+    case_path = Path(__file__).parent / "data" / "review" / "confctl_source_of_truth_case.json"
+    report_path = Path(__file__).parent / "data" / "review" / "confctl_good_report.md"
+
+    payload = _run_bridge(
+        "validate-review",
+        str(case_path),
+        str(report_path),
+        "--skip-adversary",
+    )
+
+    assert payload["ok"] is True
+    assert payload["command"] == "validate-review"
+    assert payload["stage"]["passed"] is True
+    assert payload["stage"]["adversary"]["skipped"] is True
+    assert payload["timing"]["rubric_ms"] >= 0
+
+
+def test_validate_bugfix_skip_adversary_returns_json():
+    bugfix_dir = Path(__file__).parent / "data" / "bugfix"
+    for case_path in sorted(bugfix_dir.glob("*_case.json")):
+        stem = case_path.name.removesuffix("_case.json")
+        report_path = bugfix_dir / f"{stem}_good_report.md"
+
+        payload = _run_bridge(
+            "validate-bugfix",
+            str(case_path),
+            str(report_path),
+            "--skip-adversary",
+        )
+
+        assert payload["ok"] is True, stem
+        assert payload["command"] == "validate-bugfix", stem
+        assert payload["stage"]["passed"] is True, stem
+        assert payload["stage"]["adversary"]["skipped"] is True, stem
+        assert payload["timing"]["rubric_ms"] >= 0, stem
+
+
 def test_augment_generated_prompt_enforces_init_pairs():
     spec_text = """
     File Structure:
@@ -427,6 +465,10 @@ def test_run_workflow_uses_patch_repair(monkeypatch):
         config_path=None,
         model_name="opus5-5",
         skip_adversary=True,
+        clarification_mode="off",
+        clarification_answers=None,
+        clarification_answers_text=None,
+        delegate_unanswered=False,
     )
 
     assert payload["plan_validation"]["passed"] is True
@@ -551,6 +593,10 @@ def test_build_from_idea_workflow_success(monkeypatch, tmp_path):
         config_path=None,
         model_name="opus5-5",
         skip_adversary=True,
+        clarification_mode="off",
+        clarification_answers=None,
+        clarification_answers_text=None,
+        delegate_unanswered=False,
     )
 
     assert payload["command"] == "build-from-idea"
@@ -652,6 +698,10 @@ def test_build_from_idea_workflow_stops_after_failed_spec_attempts(monkeypatch, 
         config_path=None,
         model_name="opus5-5",
         skip_adversary=True,
+        clarification_mode="off",
+        clarification_answers=None,
+        clarification_answers_text=None,
+        delegate_unanswered=False,
     )
 
     assert payload["workflow_passed"] is False
@@ -663,3 +713,221 @@ def test_build_from_idea_workflow_stops_after_failed_spec_attempts(monkeypatch, 
     assert payload["timing"]["plan_validation_ms"] == 0
     assert generation_attempts[0] is None
     assert isinstance(generation_attempts[1], str)
+
+
+def test_parse_answers_text_supports_by_id_mapping_and_delegate_phrase():
+    clarifications = [
+        {"id": "spec-clar-gap-001", "question": "Q1"},
+        {"id": "spec-clar-gap-002", "question": "Q2"},
+    ]
+
+    parsed = bridge._parse_answers_text(
+        "spec-clar-gap-001: use strict RBAC; spec-clar-gap-002: tenant scoped queues",
+        clarifications,
+    )
+    assert parsed["ambiguous"] is False
+    assert parsed["answers"]["spec-clar-gap-001"] == "use strict RBAC"
+    assert parsed["answers"]["spec-clar-gap-002"] == "tenant scoped queues"
+
+    delegated = bridge._parse_answers_text("you decide for me", clarifications)
+    assert delegated["delegate_all"] is True
+
+
+def test_build_from_idea_requires_clarification_when_blocking_gap_unanswered(monkeypatch, tmp_path):
+    workspace_root = tmp_path.resolve()
+    monkeypatch.setattr(bridge, "_workspace_root", lambda: workspace_root)
+
+    monkeypatch.setattr(
+        bridge,
+        "_generate_spec_from_idea",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "command": "generate-spec",
+            "output_path": str(workspace_root / "SPEC.md"),
+            "timing": {"elapsed_ms": 10},
+        },
+    )
+
+    def fake_validate_spec(*args, **kwargs):
+        return {
+            "ok": True,
+            "command": "validate-spec",
+            "stage": {
+                "passed": False,
+                "rubric_checks": [],
+                "adversary": {
+                    "error": "",
+                    "blocking_gaps": 1,
+                    "blocking_guesses": 0,
+                    "contradiction_count": 0,
+                    "gaps": [
+                        {
+                            "quote": "Tenant isolation model unspecified",
+                            "question": "Should background workers enforce tenant_id at dequeue time?",
+                            "severity": "BLOCKING",
+                        }
+                    ],
+                    "guesses": [],
+                    "contradictions": [],
+                },
+            },
+            "timing": {"elapsed_ms": 20},
+        }
+
+    monkeypatch.setattr(bridge, "_validate_spec", fake_validate_spec)
+    monkeypatch.setattr(
+        bridge,
+        "_generate_prompt",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("prompt generation should not run")),
+    )
+
+    payload = bridge._build_from_idea_workflow(
+        idea="Build a multitenant queue processor",
+        idea_path=None,
+        spec_output_path="SPEC.md",
+        prompt_output_path="planner-prompt.md",
+        plan_output_path="PLAN.json",
+        context_paths=[],
+        overwrite=False,
+        config_path=None,
+        model_name="opus5-5",
+        skip_adversary=False,
+        clarification_mode="required",
+        clarification_answers=None,
+        clarification_answers_text=None,
+        delegate_unanswered=False,
+    )
+
+    assert payload["workflow_passed"] is False
+    assert payload["clarification_required"] is True
+    assert len(payload["clarifications"]) == 1
+    assert payload["pending_clarification_ids"] == ["spec-clar-gap-001"]
+
+
+def test_build_from_idea_accepts_delegate_phrase_for_blocking_gaps(monkeypatch, tmp_path):
+    workspace_root = tmp_path.resolve()
+    monkeypatch.setattr(bridge, "_workspace_root", lambda: workspace_root)
+
+    monkeypatch.setattr(
+        bridge,
+        "_generate_spec_from_idea",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "command": "generate-spec",
+            "output_path": str(workspace_root / "SPEC.md"),
+            "timing": {"elapsed_ms": 10},
+        },
+    )
+
+    validate_spec_calls = {"count": 0}
+
+    def fake_validate_spec(*args, **kwargs):
+        validate_spec_calls["count"] += 1
+        if validate_spec_calls["count"] == 1:
+            return {
+                "ok": True,
+                "command": "validate-spec",
+                "stage": {
+                    "passed": False,
+                    "rubric_checks": [],
+                    "adversary": {
+                        "error": "",
+                        "blocking_gaps": 1,
+                        "blocking_guesses": 0,
+                        "contradiction_count": 0,
+                        "gaps": [
+                            {
+                                "quote": "Tenant isolation model unspecified",
+                                "question": "Should background workers enforce tenant_id at dequeue time?",
+                                "severity": "BLOCKING",
+                            }
+                        ],
+                        "guesses": [],
+                        "contradictions": [],
+                    },
+                },
+                "timing": {"elapsed_ms": 20},
+            }
+        return {
+            "ok": True,
+            "command": "validate-spec",
+            "stage": {
+                "passed": True,
+                "rubric_checks": [],
+                "adversary": {
+                    "error": "",
+                    "blocking_gaps": 0,
+                    "blocking_guesses": 0,
+                    "contradiction_count": 0,
+                    "gaps": [],
+                    "guesses": [],
+                    "contradictions": [],
+                },
+            },
+            "timing": {"elapsed_ms": 21},
+        }
+
+    monkeypatch.setattr(bridge, "_validate_spec", fake_validate_spec)
+    monkeypatch.setattr(
+        bridge,
+        "_generate_prompt",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "command": "generate-prompt",
+            "output_path": str(workspace_root / "planner-prompt.md"),
+            "timing": {"elapsed_ms": 30},
+        },
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_generate_plan",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "command": "generate-plan",
+            "output_path": str(workspace_root / "PLAN.json"),
+            "summary": {"format": "phases", "phase_count": 1, "task_count": 1},
+            "timing": {"elapsed_ms": 40},
+        },
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_validate_plan",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "command": "validate-plan",
+            "stage": {
+                "passed": True,
+                "rubric_checks": [],
+                "adversary": {
+                    "error": "",
+                    "blocking_gaps": 0,
+                    "blocking_guesses": 0,
+                    "contradiction_count": 0,
+                    "gaps": [],
+                    "guesses": [],
+                    "contradictions": [],
+                },
+            },
+            "timing": {"elapsed_ms": 50},
+        },
+    )
+
+    payload = bridge._build_from_idea_workflow(
+        idea="Build a multitenant queue processor",
+        idea_path=None,
+        spec_output_path="SPEC.md",
+        prompt_output_path="planner-prompt.md",
+        plan_output_path="PLAN.json",
+        context_paths=[],
+        overwrite=False,
+        config_path=None,
+        model_name="opus5-5",
+        skip_adversary=False,
+        clarification_mode="required",
+        clarification_answers=None,
+        clarification_answers_text="you decide for me",
+        delegate_unanswered=False,
+    )
+
+    assert payload["workflow_passed"] is True
+    assert payload["clarification_required"] is False

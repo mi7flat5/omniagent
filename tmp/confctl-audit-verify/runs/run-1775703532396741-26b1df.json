@@ -1,0 +1,16 @@
+{
+  "finished_at_us": 1775703879348184,
+  "input": "Review this repository for correctness defects. Produce a findings-first final report.",
+  "output": "",
+  "profile": "audit",
+  "project_id": "confctl",
+  "run_id": "run-1775703532396741-26b1df",
+  "session_id": "1775703532396465-39a311",
+  "started_at_us": 1775703532396756,
+  "status": "completed",
+  "usage": {
+    "cache_read_tokens": 0,
+    "input_tokens": 0,
+    "output_tokens": 0
+  }
+}

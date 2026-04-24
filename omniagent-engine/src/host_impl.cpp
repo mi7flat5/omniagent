@@ -1,5 +1,7 @@
 #include "project_runtime_internal.h"
 
+#include "tools/planner_clarification.h"
+
 #include <map>
 #include <random>
 #include <sstream>
@@ -116,6 +118,14 @@ void ForwardingObserver::on_event(const Event& event) {
 
         if (const auto* text_delta = std::get_if<TextDeltaEvent>(&enriched)) {
             run_state->result.output += text_delta->text;
+        } else if (const auto* tool_result = std::get_if<ToolResultEvent>(&enriched)) {
+            if (auto clarification = planner::parse_pending_clarification(
+                    tool_result->tool_name,
+                    tool_result->content)) {
+                clarification->requested_at = std::chrono::system_clock::now();
+                run_state->result.pending_clarification = *clarification;
+                run_state->result.pause_reason = "clarification_required";
+            }
         } else if (const auto* error = std::get_if<ErrorEvent>(&enriched)) {
             if (!error->recoverable) {
                 run_state->result.error = error->message;
@@ -129,6 +139,16 @@ void ForwardingObserver::on_event(const Event& event) {
     }
 
     dispatch_run_event(run_state, enriched);
+
+    if (const auto* tool_result = std::get_if<ToolResultEvent>(&enriched)) {
+        if (auto clarification = planner::parse_pending_clarification(
+                tool_result->tool_name,
+                tool_result->content)) {
+            clarification->requested_at = std::chrono::system_clock::now();
+            dispatch_run_event(run_state, ClarificationRequestedEvent{*clarification, {}});
+            persist_run_state(run_state);
+        }
+    }
 
     if (clear_active_run) {
         finalize_run_state(run_state, RunStatus::Completed);
@@ -542,22 +562,7 @@ bool ProjectEngineHost::resume_run(const std::string& run_id, const std::string&
     if (!run_state) {
         return false;
     }
-
-    const auto decision = parse_resume_decision(resume_input);
-    {
-        std::lock_guard<std::mutex> run_lock(run_state->mutex);
-        if (run_state->result.status != RunStatus::Paused
-            || !run_state->result.pending_approval.has_value()) {
-            return false;
-        }
-        run_state->pending_resolution = decision;
-        run_state->result.status = RunStatus::Running;
-        run_state->result.pause_reason.reset();
-        run_state->result.pending_approval.reset();
-    }
-    persist_run_state(run_state);
-    run_state->approval_cv.notify_all();
-    return true;
+    return resume_live_run(run_state, resume_input);
 }
 
 bool ProjectEngineHost::delete_run(const std::string& run_id) {

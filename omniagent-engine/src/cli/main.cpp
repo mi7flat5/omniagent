@@ -7,6 +7,33 @@
 
 namespace {
 
+double parse_double_option(const std::string& raw_value, const char* name) {
+    std::size_t parsed = 0;
+    const double value = std::stod(raw_value, &parsed);
+    if (parsed != raw_value.size()) {
+        throw std::invalid_argument(std::string("invalid value for ") + name + ": " + raw_value);
+    }
+    return value;
+}
+
+int parse_int_option(const std::string& raw_value, const char* name) {
+    std::size_t parsed = 0;
+    const int value = std::stoi(raw_value, &parsed);
+    if (parsed != raw_value.size() || value <= 0) {
+        throw std::invalid_argument(std::string("invalid value for ") + name + ": " + raw_value);
+    }
+    return value;
+}
+
+int parse_non_negative_int_option(const std::string& raw_value, const char* name) {
+    std::size_t parsed = 0;
+    const int value = std::stoi(raw_value, &parsed);
+    if (parsed != raw_value.size() || value < 0) {
+        throw std::invalid_argument(std::string("invalid value for ") + name + ": " + raw_value);
+    }
+    return value;
+}
+
 omni::engine::cli::CliOptions parse_args(int argc, char** argv) {
     omni::engine::cli::CliOptions options;
 
@@ -67,6 +94,38 @@ omni::engine::cli::CliOptions parse_args(int argc, char** argv) {
         }
         if (arg == "--api-key") {
             options.api_key = require_value("--api-key");
+            continue;
+        }
+        if (arg == "--max-context-tokens") {
+            options.max_context_tokens = parse_int_option(require_value("--max-context-tokens"), "--max-context-tokens");
+            continue;
+        }
+        if (arg == "--temperature") {
+            options.temperature = parse_double_option(require_value("--temperature"), "--temperature");
+            continue;
+        }
+        if (arg == "--top-p") {
+            options.top_p = parse_double_option(require_value("--top-p"), "--top-p");
+            continue;
+        }
+        if (arg == "--top-k") {
+            options.top_k = parse_non_negative_int_option(require_value("--top-k"), "--top-k");
+            continue;
+        }
+        if (arg == "--min-p") {
+            options.min_p = parse_double_option(require_value("--min-p"), "--min-p");
+            continue;
+        }
+        if (arg == "--presence-penalty") {
+            options.presence_penalty = parse_double_option(require_value("--presence-penalty"), "--presence-penalty");
+            continue;
+        }
+        if (arg == "--frequency-penalty") {
+            options.frequency_penalty = parse_double_option(require_value("--frequency-penalty"), "--frequency-penalty");
+            continue;
+        }
+        if (arg == "--max-tokens") {
+            options.max_tokens = parse_int_option(require_value("--max-tokens"), "--max-tokens");
             continue;
         }
         if (arg == "--prompt") {

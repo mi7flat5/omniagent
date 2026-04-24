@@ -29,7 +29,9 @@ public:
     PermissionDecision check(
         const std::string&    tool_name,
         const nlohmann::json& args,
-        const std::string&    description);
+        const std::string&    description,
+        bool                  tool_is_read_only = false,
+        bool                  tool_is_destructive = false);
 
 private:
     PermissionDelegate& delegate_;

@@ -25,7 +25,7 @@ enum class PermissionMode {
     Default,      // Ask delegate for everything
     AcceptEdits,  // Auto-allow file edit/write tools, ask for others
     Bypass,       // Allow everything without asking
-    Plan,         // Show what would happen, ask to proceed (Phase 3; Default now)
+    Plan,         // Auto-allow safe read-only tools, ask to proceed for others
 };
 
 enum class RuleBehavior { Allow, Deny, Ask };

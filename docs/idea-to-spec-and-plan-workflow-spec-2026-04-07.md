@@ -205,7 +205,7 @@ No prior chat history should be required to understand the generated artifacts.
 ### Architectural Boundaries To Respect
 
 - Keep the workflow machine-readable and inside `planner-harness` rather than reimplementing the planner contract with ad hoc shell commands.
-- Preserve the current standalone separation of `omniagent-engine` from `omniagent-core`.
+- Preserve `omniagent-engine` as independently buildable/testable while allowing `omniagent-core` to embed project-scoped engine hosts for this workflow.
 - Do not bypass current path resolution and workspace containment checks in the engine tool wrapper.
 - Do not introduce GUI-specific dependencies into the engine runtime.
 - Reuse existing validation and repair helpers instead of creating parallel plan-validation logic.

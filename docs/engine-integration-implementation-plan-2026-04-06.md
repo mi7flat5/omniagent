@@ -20,7 +20,7 @@ The spec is **sound and well-structured**. Its claims about the current engine s
 | No structured tracing | Confirmed; no span/trace types anywhere |
 | No mid-run pause/resume | Session has `cancel()` but no stop/pause/resume |
 | Hooks/memory exist but aren't wired publicly | `HookEngine` and `MemoryLoader` tested internally, no `Engine`/`Session` API |
-| PermissionMode::Plan is placeholder | Falls back to Default behavior in `permission_checker.cpp` |
+| PermissionMode::Plan has concrete behavior | Auto-allows safe read-only tools and delegates non-read-only checks in `permission_checker.cpp` |
 
 ### Known Bugs The Spec Must Account For
 
@@ -66,7 +66,7 @@ Phase 1: Host/Session/Run API Layer
 Phase 2: Extended Events + Agent Profiles
 Phase 3: CLI REPL
 Phase 4: Persistence Expansion
-Phase 5: omniagent-core Adapter (deferred; separate spec)
+Phase 5: omniagent-core Adapter (active integration track)
 ```
 
 ---
@@ -531,9 +531,10 @@ struct RunRecord {
 
 ---
 
-### Phase 5: omniagent-core Adapter (Deferred)
+### Phase 5: omniagent-core Adapter
 
-This phase is outlined for completeness but should get its own spec when Phases 0–4 are stable.
+This phase is now part of the active architecture track for project-scoped
+engine loops in `omniagent-core` (outside graph execution).
 
 #### 5.1 — Core-side service layer
 
@@ -705,6 +706,6 @@ The spec is validated and accurate. The implementation plan sequences around fiv
 3. **Phase 2** (richness): Extended events + capability-based profiles.
 4. **Phase 3** (product): CLI REPL as thin client over the API.
 5. **Phase 4** (durability): Run + host + approval persistence.
-6. **Phase 5** (integration): Core adapter — deferred to separate spec.
+6. **Phase 5** (integration): Core adapter for `omniagent-core` project-scoped agent loops.
 
 Each phase is independently testable and shippable. Phase 0+1 is the critical path.

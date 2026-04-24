@@ -18,6 +18,14 @@ DEFAULT_ROOT_CONTEXT_FILES = (
     "README.md",
     "API_CONTRACT.md",
 )
+CLARIFICATION_MODES = {"required", "assume", "off"}
+DELEGATION_PHRASES = (
+    "you decide for me",
+    "decide for me",
+    "your call",
+    "use the recommended default",
+    "use recommended defaults",
+)
 
 
 def _read_text(path: str) -> str:
@@ -544,6 +552,289 @@ def _serialize_contradiction(contradiction) -> dict:
     }
 
 
+def _normalize_clarification_mode(value: str | None) -> str:
+    mode = (value or "required").strip().lower()
+    if mode not in CLARIFICATION_MODES:
+        raise ValueError(
+            f"invalid clarification_mode '{value}' (expected one of: required, assume, off)"
+        )
+    return mode
+
+
+def _extract_stage_clarifications(stage: dict,
+                                  *,
+                                  stage_name: str) -> list[dict]:
+    if not isinstance(stage, dict):
+        return []
+
+    adversary = stage.get("adversary")
+    if not isinstance(adversary, dict):
+        return []
+
+    clarifications: list[dict] = []
+
+    for index, gap in enumerate(adversary.get("gaps", []), start=1):
+        if not isinstance(gap, dict):
+            continue
+        clarifications.append(
+            {
+                "id": f"{stage_name}-clar-gap-{index:03d}",
+                "stage": stage_name,
+                "kind": "gap",
+                "severity": str(gap.get("severity", "COSMETIC")).upper(),
+                "quote": str(gap.get("quote", "")),
+                "question": str(gap.get("question", "")).strip(),
+                "recommended_default": "Use the strictest deterministic interpretation and record it as an explicit assumption.",
+                "answer_type": "text",
+                "options": [],
+            }
+        )
+
+    for index, guess in enumerate(adversary.get("guesses", []), start=1):
+        if not isinstance(guess, dict):
+            continue
+        what = str(guess.get("what", "")).strip()
+        why = str(guess.get("why", "")).strip()
+        question = what if not why else f"{what} ({why})"
+        clarifications.append(
+            {
+                "id": f"{stage_name}-clar-guess-{index:03d}",
+                "stage": stage_name,
+                "kind": "guess",
+                "severity": str(guess.get("severity", "COSMETIC")).upper(),
+                "quote": "",
+                "question": question,
+                "recommended_default": "Choose the lowest-risk implementation default and capture it in assumptions.",
+                "answer_type": "text",
+                "options": [],
+            }
+        )
+
+    for index, contradiction in enumerate(adversary.get("contradictions", []), start=1):
+        if not isinstance(contradiction, dict):
+            continue
+        description = str(contradiction.get("description", "")).strip()
+        file_a = str(contradiction.get("file_a", "")).strip()
+        file_b = str(contradiction.get("file_b", "")).strip()
+        question = description or f"Resolve contradiction between {file_a} and {file_b}."
+        clarifications.append(
+            {
+                "id": f"{stage_name}-clar-contradiction-{index:03d}",
+                "stage": stage_name,
+                "kind": "contradiction",
+                "severity": "BLOCKING",
+                "quote": question,
+                "question": question,
+                "recommended_default": "Prefer consistency with dependency order and explicit API/import contracts.",
+                "answer_type": "text",
+                "options": [],
+            }
+        )
+
+    deduped: list[dict] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for item in clarifications:
+        key = (
+            item["stage"],
+            item.get("kind", ""),
+            item.get("question", "").strip().lower(),
+            item.get("quote", "").strip().lower(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _normalize_answer_value(value) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _normalize_answers_payload(raw_answers) -> dict[str, str]:
+    if raw_answers is None:
+        return {}
+
+    if isinstance(raw_answers, dict):
+        normalized: dict[str, str] = {}
+        for key, value in raw_answers.items():
+            answer = _normalize_answer_value(value)
+            if not answer:
+                continue
+            normalized[str(key)] = answer
+        return normalized
+
+    if isinstance(raw_answers, list):
+        normalized: dict[str, str] = {}
+        for entry in raw_answers:
+            if not isinstance(entry, dict):
+                continue
+            answer_id = str(entry.get("id", "")).strip()
+            answer = _normalize_answer_value(entry.get("value"))
+            if not answer_id or not answer:
+                continue
+            normalized[answer_id] = answer
+        return normalized
+
+    raise ValueError("clarification answers must be an object or array of {id, value}")
+
+
+def _parse_answers_text(text: str | None,
+                        clarifications: list[dict]) -> dict:
+    response = {
+        "answers": {},
+        "delegate_all": False,
+        "ambiguous": False,
+    }
+    if text is None:
+        return response
+
+    raw = text.strip()
+    if not raw:
+        return response
+
+    lower = raw.lower()
+    response["delegate_all"] = any(phrase in lower for phrase in DELEGATION_PHRASES)
+
+    if not clarifications:
+        return response
+
+    ids = [item["id"] for item in clarifications]
+    id_union = "|".join(re.escape(answer_id) for answer_id in ids)
+    by_id_pattern = re.compile(
+        rf"({id_union})\s*[:=]\s*(.*?)(?=(?:{id_union})\s*[:=]|$)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    for match in by_id_pattern.finditer(raw):
+        answer_id = match.group(1)
+        value = match.group(2).strip(" \t\n,;.")
+        if value:
+            response["answers"][answer_id] = value
+
+    if response["answers"]:
+        return response
+
+    if len(clarifications) == 1 and not response["delegate_all"]:
+        response["answers"][clarifications[0]["id"]] = raw
+        return response
+
+    if response["delegate_all"]:
+        return response
+
+    segments = [
+        segment.strip(" \t\n,;.")
+        for segment in re.split(r"\s*;\s*|\s*\|\s*|\s*\n\s*", raw)
+        if segment.strip()
+    ]
+    if len(segments) == len(clarifications):
+        for item, segment in zip(clarifications, segments):
+            response["answers"][item["id"]] = segment
+        return response
+
+    response["ambiguous"] = True
+    return response
+
+
+def _resolve_clarification_answers(clarifications: list[dict],
+                                   *,
+                                   structured_answers: dict[str, str],
+                                   answers_text: str | None,
+                                   delegate_unanswered: bool,
+                                   clarification_mode: str) -> dict:
+    text_parse = _parse_answers_text(answers_text, clarifications)
+    answers = dict(text_parse["answers"])
+    answers.update(structured_answers)
+
+    answered_ids: list[str] = []
+    assumptions: list[dict] = []
+    unresolved_blocking_ids: list[str] = []
+
+    for item in clarifications:
+        answer_id = item["id"]
+        answer_value = answers.get(answer_id, "").strip()
+        if answer_value:
+            answered_ids.append(answer_id)
+            continue
+
+        should_delegate = (
+            clarification_mode == "assume"
+            or delegate_unanswered
+            or text_parse["delegate_all"]
+        )
+        if should_delegate:
+            assumptions.append(
+                {
+                    "id": answer_id,
+                    "stage": item.get("stage"),
+                    "question": item.get("question", ""),
+                    "value": item.get("recommended_default", ""),
+                    "source": "recommended_default",
+                }
+            )
+            continue
+
+        if str(item.get("severity", "COSMETIC")).upper() == "BLOCKING":
+            unresolved_blocking_ids.append(answer_id)
+
+    return {
+        "answers": answers,
+        "answered_ids": answered_ids,
+        "assumptions": assumptions,
+        "unresolved_blocking_ids": unresolved_blocking_ids,
+        "ambiguous_freeform": text_parse["ambiguous"],
+        "delegate_all": text_parse["delegate_all"],
+    }
+
+
+def _clarification_feedback_lines(clarifications: list[dict],
+                                  resolution: dict) -> list[str]:
+    id_to_question = {item["id"]: item.get("question", "") for item in clarifications}
+    lines: list[str] = []
+    for answer_id in resolution.get("answered_ids", []):
+        answer_text = resolution["answers"].get(answer_id, "")
+        question = id_to_question.get(answer_id, "")
+        lines.append(f"- {answer_id}: {question} -> {answer_text}")
+
+    for assumption in resolution.get("assumptions", []):
+        lines.append(
+            f"- {assumption['id']}: {assumption['question']} -> "
+            f"{assumption['value']} (delegated default)"
+        )
+    return lines
+
+
+def _build_clarification_result(*,
+                                command: str,
+                                clarifications: list[dict],
+                                resolution: dict,
+                                clarification_mode: str,
+                                message: str = "") -> dict:
+    unresolved_ids = resolution.get("unresolved_blocking_ids", [])
+    clarification_required = bool(unresolved_ids)
+    return {
+        "command": command,
+        "clarification_mode": clarification_mode,
+        "clarification_required": clarification_required,
+        "clarifications": clarifications,
+        "clarification_answers": resolution.get("answers", {}),
+        "clarification_answered_ids": resolution.get("answered_ids", []),
+        "clarification_assumptions": resolution.get("assumptions", []),
+        "pending_clarification_ids": unresolved_ids,
+        "clarification_parse_ambiguous": resolution.get("ambiguous_freeform", False),
+        "clarification_message": message,
+    }
+
+
+def _attach_clarification_fields(payload: dict, clarification: dict) -> dict:
+    payload["clarification"] = clarification
+    payload["clarification_required"] = clarification.get("clarification_required", False)
+    payload["clarifications"] = clarification.get("clarifications", [])
+    payload["pending_clarification_ids"] = clarification.get("pending_clarification_ids", [])
+    return payload
+
+
 def _serialize_stage(stage_result, *, adversary_skipped: bool, adversary_error: str = "") -> dict:
     blocking_gaps = sum(1 for gap in stage_result.adversary_gaps if gap.severity == "BLOCKING")
     blocking_guesses = sum(1 for guess in stage_result.adversary_guesses if guess.severity == "BLOCKING")
@@ -568,6 +859,13 @@ def _serialize_stage(stage_result, *, adversary_skipped: bool, adversary_error: 
             "contradictions": [_serialize_contradiction(c) for c in stage_result.contradictions],
         },
     }
+
+
+def _load_case_json(case_path: str) -> dict:
+    case_data = json.loads(_read_text(case_path))
+    if not isinstance(case_data, dict):
+        raise ValueError(f"case file must contain a JSON object: {case_path}")
+    return case_data
 
 
 def _load_config_and_model(config_path: str | None,
@@ -881,6 +1179,128 @@ def _validate_plan(spec_path: str,
     )
 
 
+def _validate_review(case_path: str,
+                     report_path: str,
+                     *,
+                     config_path: str | None,
+                     model_name: str | None,
+                     skip_adversary: bool) -> dict:
+    from scoring import StageResult
+    from models import request_timeout_seconds
+    from validators.review_adversary import run_adversary as review_adversary
+    from validators.review_rubric import validate_review as review_rubric
+
+    started_at = time.perf_counter()
+    case_data = _load_case_json(case_path)
+    report_text = _read_text(report_path)
+    rubric_started_at = time.perf_counter()
+    rubric_result = review_rubric(report_text, case_data)
+    rubric_elapsed_ms = _elapsed_ms(rubric_started_at)
+    adversary_error = ""
+    adversary_skipped = skip_adversary
+    adversary_result = StageResult()
+    adversary_elapsed_ms = 0
+    adversary_model = None
+    adversary_timeout_seconds = None
+
+    if not skip_adversary:
+        try:
+            config, model = _load_config_and_model(config_path, model_name, purpose="adversary")
+            adversary_model = model
+            adversary_timeout_seconds = request_timeout_seconds(config, model)
+            adversary_started_at = time.perf_counter()
+            adversary_result = review_adversary(config, model, case_data, report_text)
+            adversary_elapsed_ms = _elapsed_ms(adversary_started_at)
+        except Exception as exc:  # pragma: no cover - exercised via JSON result path
+            adversary_error = str(exc)
+
+    combined = StageResult(
+        rubric_checks=rubric_result.rubric_checks,
+        adversary_gaps=adversary_result.adversary_gaps,
+        adversary_guesses=adversary_result.adversary_guesses,
+    )
+    return _attach_timing({
+        "ok": True,
+        "command": "validate-review",
+        "case_id": case_data.get("id", ""),
+        "case_kind": case_data.get("kind", "review"),
+        "case_path": str(Path(case_path).resolve()),
+        "report_path": str(Path(report_path).resolve()),
+        "stage": _serialize_stage(
+            combined,
+            adversary_skipped=adversary_skipped,
+            adversary_error=adversary_error,
+        ),
+    },
+        started_at,
+        rubric_ms=rubric_elapsed_ms,
+        adversary_ms=adversary_elapsed_ms,
+        adversary_model=adversary_model,
+        adversary_timeout_seconds=adversary_timeout_seconds,
+    )
+
+
+def _validate_bugfix(case_path: str,
+                     report_path: str,
+                     *,
+                     config_path: str | None,
+                     model_name: str | None,
+                     skip_adversary: bool) -> dict:
+    from scoring import StageResult
+    from models import request_timeout_seconds
+    from validators.bugfix_adversary import run_adversary as bugfix_adversary
+    from validators.bugfix_rubric import validate_bugfix as bugfix_rubric
+
+    started_at = time.perf_counter()
+    case_data = _load_case_json(case_path)
+    report_text = _read_text(report_path)
+    rubric_started_at = time.perf_counter()
+    rubric_result = bugfix_rubric(report_text, case_data)
+    rubric_elapsed_ms = _elapsed_ms(rubric_started_at)
+    adversary_error = ""
+    adversary_skipped = skip_adversary
+    adversary_result = StageResult()
+    adversary_elapsed_ms = 0
+    adversary_model = None
+    adversary_timeout_seconds = None
+
+    if not skip_adversary:
+        try:
+            config, model = _load_config_and_model(config_path, model_name, purpose="adversary")
+            adversary_model = model
+            adversary_timeout_seconds = request_timeout_seconds(config, model)
+            adversary_started_at = time.perf_counter()
+            adversary_result = bugfix_adversary(config, model, case_data, report_text)
+            adversary_elapsed_ms = _elapsed_ms(adversary_started_at)
+        except Exception as exc:  # pragma: no cover - exercised via JSON result path
+            adversary_error = str(exc)
+
+    combined = StageResult(
+        rubric_checks=rubric_result.rubric_checks,
+        adversary_gaps=adversary_result.adversary_gaps,
+        adversary_guesses=adversary_result.adversary_guesses,
+    )
+    return _attach_timing({
+        "ok": True,
+        "command": "validate-bugfix",
+        "case_id": case_data.get("id", ""),
+        "case_kind": case_data.get("kind", "bugfix"),
+        "case_path": str(Path(case_path).resolve()),
+        "report_path": str(Path(report_path).resolve()),
+        "stage": _serialize_stage(
+            combined,
+            adversary_skipped=adversary_skipped,
+            adversary_error=adversary_error,
+        ),
+    },
+        started_at,
+        rubric_ms=rubric_elapsed_ms,
+        adversary_ms=adversary_elapsed_ms,
+        adversary_model=adversary_model,
+        adversary_timeout_seconds=adversary_timeout_seconds,
+    )
+
+
 def _generate_prompt(spec_path: str,
                      output_path: str,
                      *,
@@ -1068,8 +1488,15 @@ def _run_workflow(spec_path: str,
                   *,
                   config_path: str | None,
                   model_name: str | None,
-                  skip_adversary: bool) -> dict:
+                  skip_adversary: bool,
+                  clarification_mode: str,
+                  clarification_answers,
+                  clarification_answers_text: str | None,
+                  delegate_unanswered: bool) -> dict:
     started_at = time.perf_counter()
+    clarification_mode = _normalize_clarification_mode(clarification_mode)
+    parsed_answers = _normalize_answers_payload(clarification_answers)
+
     prompt_result = _generate_prompt(
         spec_path,
         prompt_output,
@@ -1090,6 +1517,52 @@ def _run_workflow(spec_path: str,
         model_name=model_name,
         skip_adversary=skip_adversary,
     )
+
+    spec_clarifications = _extract_stage_clarifications(spec_validation["stage"], stage_name="spec")
+    spec_resolution = _resolve_clarification_answers(
+        spec_clarifications,
+        structured_answers=parsed_answers,
+        answers_text=clarification_answers_text,
+        delegate_unanswered=delegate_unanswered,
+        clarification_mode=clarification_mode,
+    )
+    spec_clarification = _build_clarification_result(
+        command="run",
+        clarifications=spec_clarifications,
+        resolution=spec_resolution,
+        clarification_mode=clarification_mode,
+        message=(
+            "One or more clarification answers could not be confidently mapped. "
+            "Please answer by question id or in clearly separated segments."
+            if spec_resolution["ambiguous_freeform"]
+            else ""
+        ),
+    )
+
+    if clarification_mode == "required" and spec_clarification["clarification_required"]:
+        payload = {
+            "ok": True,
+            "command": "run",
+            "workflow_passed": False,
+            "spec_path": str(Path(spec_path).resolve()),
+            "artifacts": {
+                "prompt_path": prompt_result["output_path"],
+                "plan_path": plan_result["output_path"],
+            },
+            "spec_validation": spec_validation["stage"],
+            "plan_generation": plan_result["summary"],
+            "timing": {
+                "prompt_generation_ms": prompt_result.get("timing", {}).get("elapsed_ms", 0),
+                "plan_generation_ms": initial_plan_generation_ms,
+                "spec_validation_ms": spec_validation.get("timing", {}).get("elapsed_ms", 0),
+                "plan_validation_ms": 0,
+            },
+        }
+        payload = _attach_clarification_fields(payload, spec_clarification)
+        return _attach_timing(payload, started_at)
+
+    spec_feedback_lines = _clarification_feedback_lines(spec_clarifications, spec_resolution)
+
     plan_validation = _validate_plan(
         spec_path,
         plan_result["output_path"],
@@ -1103,7 +1576,57 @@ def _run_workflow(spec_path: str,
         if plan_validation["stage"]["passed"]:
             break
 
+        plan_clarifications = _extract_stage_clarifications(plan_validation["stage"], stage_name="plan")
+        plan_resolution = _resolve_clarification_answers(
+            plan_clarifications,
+            structured_answers=parsed_answers,
+            answers_text=clarification_answers_text,
+            delegate_unanswered=delegate_unanswered,
+            clarification_mode=clarification_mode,
+        )
+        plan_clarification = _build_clarification_result(
+            command="run",
+            clarifications=plan_clarifications,
+            resolution=plan_resolution,
+            clarification_mode=clarification_mode,
+            message=(
+                "One or more clarification answers could not be confidently mapped. "
+                "Please answer by question id or in clearly separated segments."
+                if plan_resolution["ambiguous_freeform"]
+                else ""
+            ),
+        )
+
+        if clarification_mode == "required" and plan_clarification["clarification_required"]:
+            payload = {
+                "ok": True,
+                "command": "run",
+                "workflow_passed": False,
+                "spec_path": str(Path(spec_path).resolve()),
+                "artifacts": {
+                    "prompt_path": prompt_result["output_path"],
+                    "plan_path": plan_result["output_path"],
+                },
+                "spec_validation": spec_validation["stage"],
+                "plan_generation": plan_result["summary"],
+                "plan_validation": plan_validation["stage"],
+                "timing": {
+                    "prompt_generation_ms": prompt_result.get("timing", {}).get("elapsed_ms", 0),
+                    "plan_generation_ms": initial_plan_generation_ms,
+                    "spec_validation_ms": spec_validation.get("timing", {}).get("elapsed_ms", 0),
+                    "plan_validation_ms": plan_validation.get("timing", {}).get("elapsed_ms", 0),
+                },
+            }
+            if repair_attempts:
+                payload["repair_attempts"] = repair_attempts
+            payload = _attach_clarification_fields(payload, plan_clarification)
+            return _attach_timing(payload, started_at)
+
         feedback = _build_plan_repair_feedback(plan_validation["stage"])
+        plan_feedback_lines = _clarification_feedback_lines(plan_clarifications, plan_resolution)
+        all_feedback_lines = spec_feedback_lines + plan_feedback_lines
+        if all_feedback_lines:
+            feedback += "\n\nUser clarifications and delegated defaults:\n" + "\n".join(all_feedback_lines)
         try:
             plan_result = _repair_plan_with_patch(
                 spec_path,
@@ -1145,6 +1668,19 @@ def _run_workflow(spec_path: str,
             }
         )
 
+    default_clarification = {
+        "command": "run",
+        "clarification_mode": clarification_mode,
+        "clarification_required": False,
+        "clarifications": [],
+        "clarification_answers": parsed_answers,
+        "clarification_answered_ids": list(parsed_answers.keys()),
+        "clarification_assumptions": [],
+        "pending_clarification_ids": [],
+        "clarification_parse_ambiguous": False,
+        "clarification_message": "",
+    }
+
     payload = {
         "ok": True,
         "command": "run",
@@ -1165,6 +1701,7 @@ def _run_workflow(spec_path: str,
     }
     if repair_attempts:
         payload["repair_attempts"] = repair_attempts
+    payload = _attach_clarification_fields(payload, default_clarification)
     return _attach_timing(payload, started_at)
 
 
@@ -1178,8 +1715,15 @@ def _build_from_idea_workflow(*,
                               overwrite: bool,
                               config_path: str | None,
                               model_name: str | None,
-                              skip_adversary: bool) -> dict:
+                              skip_adversary: bool,
+                              clarification_mode: str,
+                              clarification_answers,
+                              clarification_answers_text: str | None,
+                              delegate_unanswered: bool) -> dict:
     started_at = time.perf_counter()
+    clarification_mode = _normalize_clarification_mode(clarification_mode)
+    parsed_answers = _normalize_answers_payload(clarification_answers)
+
     workspace_root = _workspace_root()
     resolved_idea_text, resolved_idea_path = _resolve_idea_text(
         idea,
@@ -1233,9 +1777,69 @@ def _build_from_idea_workflow(*,
             attempt_entry["retry_feedback"] = retry_feedback
         spec_attempts.append(attempt_entry)
 
+        spec_clarifications = _extract_stage_clarifications(last_spec_validation, stage_name="spec")
+        spec_resolution = _resolve_clarification_answers(
+            spec_clarifications,
+            structured_answers=parsed_answers,
+            answers_text=clarification_answers_text,
+            delegate_unanswered=delegate_unanswered,
+            clarification_mode=clarification_mode,
+        )
+        spec_clarification = _build_clarification_result(
+            command="build-from-idea",
+            clarifications=spec_clarifications,
+            resolution=spec_resolution,
+            clarification_mode=clarification_mode,
+            message=(
+                "One or more clarification answers could not be confidently mapped. "
+                "Please answer by question id or in clearly separated segments."
+                if spec_resolution["ambiguous_freeform"]
+                else ""
+            ),
+        )
+
+        if clarification_mode == "required" and spec_clarification["clarification_required"]:
+            payload = {
+                "ok": True,
+                "command": "build-from-idea",
+                "workflow_passed": False,
+                "idea": {
+                    "source": "idea_path" if resolved_idea_path else "idea",
+                    "idea_path": resolved_idea_path,
+                    "characters": len(resolved_idea_text),
+                },
+                "artifacts": {
+                    "spec_path": spec_result["output_path"],
+                },
+                "context_paths": [
+                    _relative_path(context_path, workspace_root)
+                    for context_path in resolved_context_paths
+                ],
+                "spec_attempts": spec_attempts,
+                "spec_validation": last_spec_validation,
+                "timing": {
+                    "spec_generation_ms": sum(
+                        item.get("timing", {}).get("spec_generation_ms", 0)
+                        for item in spec_attempts
+                    ),
+                    "spec_validation_ms": sum(
+                        item.get("timing", {}).get("spec_validation_ms", 0)
+                        for item in spec_attempts
+                    ),
+                    "prompt_generation_ms": 0,
+                    "plan_generation_ms": 0,
+                    "plan_validation_ms": 0,
+                },
+            }
+            payload = _attach_clarification_fields(payload, spec_clarification)
+            return _attach_timing(payload, started_at)
+
         if last_spec_validation["passed"]:
             break
         retry_feedback = _build_spec_repair_feedback(last_spec_validation)
+        spec_feedback_lines = _clarification_feedback_lines(spec_clarifications, spec_resolution)
+        if spec_feedback_lines:
+            retry_feedback += "\n\nUser clarifications and delegated defaults:\n" + "\n".join(spec_feedback_lines)
         spec_attempts[-1]["validation_feedback"] = retry_feedback
 
     if not spec_result or not last_spec_validation:
@@ -1251,6 +1855,18 @@ def _build_from_idea_workflow(*,
     )
 
     if not last_spec_validation["passed"]:
+        default_clarification = {
+            "command": "build-from-idea",
+            "clarification_mode": clarification_mode,
+            "clarification_required": False,
+            "clarifications": [],
+            "clarification_answers": parsed_answers,
+            "clarification_answered_ids": list(parsed_answers.keys()),
+            "clarification_assumptions": [],
+            "pending_clarification_ids": [],
+            "clarification_parse_ambiguous": False,
+            "clarification_message": "",
+        }
         failure_payload = {
             "ok": True,
             "command": "build-from-idea",
@@ -1277,6 +1893,7 @@ def _build_from_idea_workflow(*,
                 "plan_validation_ms": 0,
             },
         }
+        failure_payload = _attach_clarification_fields(failure_payload, default_clarification)
         return _attach_timing(failure_payload, started_at)
 
     prompt_result = _generate_prompt(
@@ -1306,7 +1923,67 @@ def _build_from_idea_workflow(*,
         if plan_validation["stage"]["passed"]:
             break
 
+        plan_clarifications = _extract_stage_clarifications(plan_validation["stage"], stage_name="plan")
+        plan_resolution = _resolve_clarification_answers(
+            plan_clarifications,
+            structured_answers=parsed_answers,
+            answers_text=clarification_answers_text,
+            delegate_unanswered=delegate_unanswered,
+            clarification_mode=clarification_mode,
+        )
+        plan_clarification = _build_clarification_result(
+            command="build-from-idea",
+            clarifications=plan_clarifications,
+            resolution=plan_resolution,
+            clarification_mode=clarification_mode,
+            message=(
+                "One or more clarification answers could not be confidently mapped. "
+                "Please answer by question id or in clearly separated segments."
+                if plan_resolution["ambiguous_freeform"]
+                else ""
+            ),
+        )
+
+        if clarification_mode == "required" and plan_clarification["clarification_required"]:
+            payload = {
+                "ok": True,
+                "command": "build-from-idea",
+                "workflow_passed": False,
+                "idea": {
+                    "source": "idea_path" if resolved_idea_path else "idea",
+                    "idea_path": resolved_idea_path,
+                    "characters": len(resolved_idea_text),
+                },
+                "artifacts": {
+                    "spec_path": spec_result["output_path"],
+                    "prompt_path": prompt_result["output_path"],
+                    "plan_path": plan_result["output_path"],
+                },
+                "context_paths": [
+                    _relative_path(context_path, workspace_root)
+                    for context_path in resolved_context_paths
+                ],
+                "spec_attempts": spec_attempts,
+                "spec_validation": last_spec_validation,
+                "plan_generation": plan_result["summary"],
+                "plan_validation": plan_validation["stage"],
+                "timing": {
+                    "spec_generation_ms": spec_generation_total_ms,
+                    "spec_validation_ms": spec_validation_total_ms,
+                    "prompt_generation_ms": prompt_result.get("timing", {}).get("elapsed_ms", 0),
+                    "plan_generation_ms": initial_plan_generation_ms,
+                    "plan_validation_ms": plan_validation.get("timing", {}).get("elapsed_ms", 0),
+                },
+            }
+            if repair_attempts:
+                payload["repair_attempts"] = repair_attempts
+            payload = _attach_clarification_fields(payload, plan_clarification)
+            return _attach_timing(payload, started_at)
+
         feedback = _build_plan_repair_feedback(plan_validation["stage"])
+        plan_feedback_lines = _clarification_feedback_lines(plan_clarifications, plan_resolution)
+        if plan_feedback_lines:
+            feedback += "\n\nUser clarifications and delegated defaults:\n" + "\n".join(plan_feedback_lines)
         try:
             plan_result = _repair_plan_with_patch(
                 spec_result["output_path"],
@@ -1348,6 +2025,19 @@ def _build_from_idea_workflow(*,
             }
         )
 
+    default_clarification = {
+        "command": "build-from-idea",
+        "clarification_mode": clarification_mode,
+        "clarification_required": False,
+        "clarifications": [],
+        "clarification_answers": parsed_answers,
+        "clarification_answered_ids": list(parsed_answers.keys()),
+        "clarification_assumptions": [],
+        "pending_clarification_ids": [],
+        "clarification_parse_ambiguous": False,
+        "clarification_message": "",
+    }
+
     payload = {
         "ok": True,
         "command": "build-from-idea",
@@ -1380,6 +2070,7 @@ def _build_from_idea_workflow(*,
     }
     if repair_attempts:
         payload["repair_attempts"] = repair_attempts
+    payload = _attach_clarification_fields(payload, default_clarification)
     return _attach_timing(payload, started_at)
 
 
@@ -1425,10 +2116,26 @@ def _build_parser() -> argparse.ArgumentParser:
     validate_plan.add_argument("--model", default=None)
     validate_plan.add_argument("--skip-adversary", action="store_true")
 
+    validate_review = sub.add_parser("validate-review", help="Validate a review or audit report and emit JSON")
+    validate_review.add_argument("case", help="Path to tracked review case JSON")
+    validate_review.add_argument("report", help="Path to review report markdown/text")
+    validate_review.add_argument("--model", default=None)
+    validate_review.add_argument("--skip-adversary", action="store_true")
+
+    validate_bugfix = sub.add_parser("validate-bugfix", help="Validate a bugfix writeup and emit JSON")
+    validate_bugfix.add_argument("case", help="Path to tracked bugfix case JSON")
+    validate_bugfix.add_argument("report", help="Path to bugfix report markdown/text")
+    validate_bugfix.add_argument("--model", default=None)
+    validate_bugfix.add_argument("--skip-adversary", action="store_true")
+
     run = sub.add_parser("run", help="Run prompt generation, plan generation, and validation")
     run.add_argument("spec", help="Path to SPEC.md")
     run.add_argument("--model", default=None)
     run.add_argument("--skip-adversary", action="store_true")
+    run.add_argument("--clarification-mode", default="required")
+    run.add_argument("--answers-json-text", default=None)
+    run.add_argument("--answers-text", default=None)
+    run.add_argument("--delegate-unanswered", action="store_true")
     run.add_argument("--prompt-output", default="planner-prompt.md")
     run.add_argument("--plan-output", default="PLAN.json")
 
@@ -1441,6 +2148,10 @@ def _build_parser() -> argparse.ArgumentParser:
     build_from_idea.add_argument("--context-path", dest="context_paths", action="append", default=[])
     build_from_idea.add_argument("--model", default=None)
     build_from_idea.add_argument("--skip-adversary", action="store_true")
+    build_from_idea.add_argument("--clarification-mode", default="required")
+    build_from_idea.add_argument("--answers-json-text", default=None)
+    build_from_idea.add_argument("--answers-text", default=None)
+    build_from_idea.add_argument("--delegate-unanswered", action="store_true")
     build_from_idea.add_argument("--overwrite", action="store_true")
     build_from_idea.add_argument("--spec-output", default="SPEC.md")
     build_from_idea.add_argument("--prompt-output", default="planner-prompt.md")
@@ -1452,6 +2163,21 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    parsed_answers = None
+    if getattr(args, "answers_json_text", None):
+        try:
+            parsed_answers = json.loads(args.answers_json_text)
+        except json.JSONDecodeError as exc:
+            _emit(
+                {
+                    "ok": False,
+                    "command": args.command,
+                    "error": f"invalid --answers-json-text payload: {exc}",
+                    "error_type": type(exc).__name__,
+                },
+                1,
+            )
 
     try:
         if args.command == "validate-spec":
@@ -1495,6 +2221,22 @@ def main() -> None:
                 model_name=args.model,
                 skip_adversary=args.skip_adversary,
             )
+        elif args.command == "validate-review":
+            payload = _validate_review(
+                args.case,
+                args.report,
+                config_path=args.config,
+                model_name=args.model,
+                skip_adversary=args.skip_adversary,
+            )
+        elif args.command == "validate-bugfix":
+            payload = _validate_bugfix(
+                args.case,
+                args.report,
+                config_path=args.config,
+                model_name=args.model,
+                skip_adversary=args.skip_adversary,
+            )
         elif args.command == "build-from-idea":
             payload = _build_from_idea_workflow(
                 idea=args.idea,
@@ -1507,6 +2249,10 @@ def main() -> None:
                 config_path=args.config,
                 model_name=args.model,
                 skip_adversary=args.skip_adversary,
+                clarification_mode=args.clarification_mode,
+                clarification_answers=parsed_answers,
+                clarification_answers_text=args.answers_text,
+                delegate_unanswered=args.delegate_unanswered,
             )
         else:
             payload = _run_workflow(
@@ -1516,6 +2262,10 @@ def main() -> None:
                 config_path=args.config,
                 model_name=args.model,
                 skip_adversary=args.skip_adversary,
+                clarification_mode=args.clarification_mode,
+                clarification_answers=parsed_answers,
+                clarification_answers_text=args.answers_text,
+                delegate_unanswered=args.delegate_unanswered,
             )
     except Exception as exc:
         _emit(

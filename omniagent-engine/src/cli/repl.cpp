@@ -1,5 +1,6 @@
 #include "cli/repl.h"
 #include "cli/repl_internal.h"
+#include "project_runtime_internal.h"
 
 #include <omni/approval.h>
 #include <omni/event.h>
@@ -11,7 +12,11 @@
 #include "providers/http_provider.h"
 #include "tools/workspace_tools.h"
 
+#include <array>
+#include <cctype>
+#include <cerrno>
 #include <chrono>
+#include <csignal>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -19,9 +24,15 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <thread>
 #include <unordered_set>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <termios.h>
+#include <unistd.h>
+#endif
 
 namespace omni::engine::cli {
 
@@ -30,6 +41,50 @@ namespace {
 using json = nlohmann::json;
 using namespace std::chrono_literals;
 using detail::CliApprovalPolicy;
+
+volatile std::sig_atomic_t g_cli_interrupt_requests = 0;
+
+void cli_sigint_handler(int) {
+    const auto pending = g_cli_interrupt_requests;
+    if (pending < 2) {
+        g_cli_interrupt_requests = static_cast<std::sig_atomic_t>(pending + 1);
+    }
+}
+
+int take_cli_interrupt_requests() {
+    const int pending = static_cast<int>(g_cli_interrupt_requests);
+    g_cli_interrupt_requests = 0;
+    return pending;
+}
+
+class ScopedCliSignalHandler {
+public:
+    ScopedCliSignalHandler()
+        : previous_sigint_(std::signal(SIGINT, cli_sigint_handler)) {
+        g_cli_interrupt_requests = 0;
+    }
+
+    ~ScopedCliSignalHandler() {
+        std::signal(SIGINT, previous_sigint_);
+        g_cli_interrupt_requests = 0;
+    }
+
+private:
+    using SignalHandler = void (*)(int);
+    SignalHandler previous_sigint_ = SIG_DFL;
+};
+
+struct WorkflowSmokeExample {
+    const char* profile;
+    const char* prompt;
+};
+
+constexpr std::array<WorkflowSmokeExample, 4> kWorkflowSmokeExamples{{
+    {"feature", "Add a JSON export command and tests"},
+    {"refactor", "Extract run formatting without changing behavior"},
+    {"audit", "Review approval handling for operator-facing risks"},
+    {"bugfix", "Fix paused-run resume and add a regression test"},
+}};
 
 std::filesystem::path default_storage_dir(const CliOptions& options) {
     return options.workspace_root / ".omniagent" / "engine-cli";
@@ -40,9 +95,323 @@ CliApprovalPolicy parse_approval_policy(const CliOptions& options,
     return detail::parse_approval_policy_value(options.approval_policy, default_policy);
 }
 
+std::string supported_profile_names_text() {
+    const auto profiles = default_profiles();
+
+    std::ostringstream stream;
+    for (std::size_t index = 0; index < profiles.size(); ++index) {
+        if (index > 0) {
+            stream << ", ";
+        }
+        stream << profiles[index].name;
+    }
+    return stream.str();
+}
+
+void append_workflow_help(std::ostringstream& stream,
+                          const std::string& profiles_prefix,
+                          const std::string& examples_prefix,
+                          const std::string& example_lead) {
+    stream << profiles_prefix << supported_profile_names_text() << '\n';
+    stream << examples_prefix << '\n';
+    for (const auto& example : kWorkflowSmokeExamples) {
+        stream << example_lead << example.profile << " \"" << example.prompt << "\"\n";
+    }
+}
+
 }  // namespace
 
 namespace {
+
+enum class ReplLineReadStatus {
+    Submitted,
+    Eof,
+    Interrupted,
+};
+
+struct ReplLineReadResult {
+    ReplLineReadStatus status = ReplLineReadStatus::Submitted;
+    std::string line;
+};
+
+ReplLineReadResult read_repl_line_with_getline(const std::string& prompt) {
+    std::cout << prompt << std::flush;
+
+    std::string line;
+    if (!std::getline(std::cin, line)) {
+        if (std::cin.fail() && !std::cin.eof()) {
+            std::cin.clear();
+            std::cout << '\n';
+            return {ReplLineReadStatus::Interrupted, {}};
+        }
+        std::cout << '\n';
+        return {ReplLineReadStatus::Eof, {}};
+    }
+
+    return {ReplLineReadStatus::Submitted, std::move(line)};
+}
+
+#if !defined(_WIN32)
+class ScopedRawTerminal {
+public:
+    ScopedRawTerminal() {
+        if (::tcgetattr(STDIN_FILENO, &original_) != 0) {
+            return;
+        }
+
+        termios raw = original_;
+        raw.c_lflag &= static_cast<tcflag_t>(~(ECHO | ICANON));
+        raw.c_iflag &= static_cast<tcflag_t>(~(IXON | ICRNL));
+        raw.c_cc[VMIN] = 1;
+        raw.c_cc[VTIME] = 0;
+        if (::tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0) {
+            enabled_ = true;
+        }
+    }
+
+    ~ScopedRawTerminal() {
+        if (enabled_) {
+            ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_);
+        }
+    }
+
+    bool enabled() const {
+        return enabled_;
+    }
+
+private:
+    termios original_{};
+    bool enabled_ = false;
+};
+
+enum class TerminalByteStatus {
+    Ok,
+    Eof,
+    Interrupted,
+};
+
+struct TerminalByteReadResult {
+    TerminalByteStatus status = TerminalByteStatus::Ok;
+    unsigned char byte = 0;
+};
+
+TerminalByteReadResult read_terminal_byte() {
+    unsigned char byte = 0;
+    const ssize_t bytes_read = ::read(STDIN_FILENO, &byte, 1);
+    if (bytes_read == 0) {
+        return {TerminalByteStatus::Eof, 0};
+    }
+    if (bytes_read < 0) {
+        if (errno == EINTR) {
+            return {TerminalByteStatus::Interrupted, 0};
+        }
+        throw std::system_error(errno, std::generic_category(), "read terminal input");
+    }
+    return {TerminalByteStatus::Ok, byte};
+}
+
+struct EscapeSequenceReadResult {
+    ReplLineReadStatus status = ReplLineReadStatus::Submitted;
+    std::string sequence;
+};
+
+EscapeSequenceReadResult read_terminal_escape_sequence() {
+    const auto first = read_terminal_byte();
+    if (first.status == TerminalByteStatus::Interrupted) {
+        return {ReplLineReadStatus::Interrupted, {}};
+    }
+    if (first.status == TerminalByteStatus::Eof) {
+        return {ReplLineReadStatus::Eof, {}};
+    }
+
+    std::string sequence;
+    sequence.push_back(static_cast<char>(first.byte));
+    if (first.byte != '[' && first.byte != 'O') {
+        return {ReplLineReadStatus::Submitted, std::move(sequence)};
+    }
+
+    while (sequence.size() < 8) {
+        const auto next = read_terminal_byte();
+        if (next.status == TerminalByteStatus::Interrupted) {
+            return {ReplLineReadStatus::Interrupted, {}};
+        }
+        if (next.status == TerminalByteStatus::Eof) {
+            return {ReplLineReadStatus::Eof, {}};
+        }
+
+        sequence.push_back(static_cast<char>(next.byte));
+        if (sequence.front() == '[') {
+            if (std::isalpha(next.byte) || next.byte == '~') {
+                break;
+            }
+            continue;
+        }
+        if (std::isalpha(next.byte)) {
+            break;
+        }
+    }
+
+    return {ReplLineReadStatus::Submitted, std::move(sequence)};
+}
+
+void redraw_repl_input(const std::string& prompt,
+                       const std::string& line,
+                       std::size_t cursor) {
+    cursor = std::min(cursor, line.size());
+    std::cout << '\r' << "\x1b[2K" << prompt << line;
+    const std::size_t tail_chars = line.size() - cursor;
+    if (tail_chars > 0) {
+        std::cout << "\x1b[" << tail_chars << 'D';
+    }
+    std::cout << std::flush;
+}
+
+ReplLineReadResult read_repl_line_with_history(const std::string& prompt,
+                                               detail::ReplInputHistory& history) {
+    if (::isatty(STDIN_FILENO) == 0 || ::isatty(STDOUT_FILENO) == 0) {
+        return read_repl_line_with_getline(prompt);
+    }
+
+    ScopedRawTerminal raw_terminal;
+    if (!raw_terminal.enabled()) {
+        return read_repl_line_with_getline(prompt);
+    }
+
+    std::string line;
+    std::size_t cursor = 0;
+    redraw_repl_input(prompt, line, cursor);
+
+    for (;;) {
+        const auto read = read_terminal_byte();
+        if (read.status == TerminalByteStatus::Interrupted) {
+            std::cout << "\r\n" << std::flush;
+            return {ReplLineReadStatus::Interrupted, {}};
+        }
+        if (read.status == TerminalByteStatus::Eof) {
+            std::cout << "\r\n" << std::flush;
+            return {ReplLineReadStatus::Eof, {}};
+        }
+
+        switch (read.byte) {
+            case '\r':
+            case '\n':
+                std::cout << "\r\n" << std::flush;
+                return {ReplLineReadStatus::Submitted, std::move(line)};
+            case 1:
+                cursor = 0;
+                redraw_repl_input(prompt, line, cursor);
+                break;
+            case 4:
+                if (line.empty()) {
+                    std::cout << "\r\n" << std::flush;
+                    return {ReplLineReadStatus::Eof, {}};
+                }
+                if (cursor < line.size()) {
+                    line.erase(cursor, 1);
+                    redraw_repl_input(prompt, line, cursor);
+                }
+                break;
+            case 5:
+                cursor = line.size();
+                redraw_repl_input(prompt, line, cursor);
+                break;
+            case 8:
+            case 127:
+                if (cursor > 0) {
+                    line.erase(cursor - 1, 1);
+                    --cursor;
+                    redraw_repl_input(prompt, line, cursor);
+                }
+                break;
+            case '\x1b': {
+                const auto escape = read_terminal_escape_sequence();
+                if (escape.status == ReplLineReadStatus::Interrupted) {
+                    std::cout << "\r\n" << std::flush;
+                    return {ReplLineReadStatus::Interrupted, {}};
+                }
+                if (escape.status == ReplLineReadStatus::Eof) {
+                    std::cout << "\r\n" << std::flush;
+                    return {ReplLineReadStatus::Eof, {}};
+                }
+
+                if (escape.sequence == "[A") {
+                    if (const auto previous = detail::previous_repl_history_entry(history, line);
+                        previous.has_value()) {
+                        line = *previous;
+                        cursor = line.size();
+                        redraw_repl_input(prompt, line, cursor);
+                    }
+                    break;
+                }
+                if (escape.sequence == "[B") {
+                    if (const auto next = detail::next_repl_history_entry(history);
+                        next.has_value()) {
+                        line = *next;
+                        cursor = line.size();
+                        redraw_repl_input(prompt, line, cursor);
+                    }
+                    break;
+                }
+                if (escape.sequence == "[C") {
+                    if (cursor < line.size()) {
+                        ++cursor;
+                        redraw_repl_input(prompt, line, cursor);
+                    }
+                    break;
+                }
+                if (escape.sequence == "[D") {
+                    if (cursor > 0) {
+                        --cursor;
+                        redraw_repl_input(prompt, line, cursor);
+                    }
+                    break;
+                }
+                if (escape.sequence == "[H" || escape.sequence == "OH") {
+                    cursor = 0;
+                    redraw_repl_input(prompt, line, cursor);
+                    break;
+                }
+                if (escape.sequence == "[F" || escape.sequence == "OF") {
+                    cursor = line.size();
+                    redraw_repl_input(prompt, line, cursor);
+                    break;
+                }
+                if (escape.sequence == "[3~") {
+                    if (cursor < line.size()) {
+                        line.erase(cursor, 1);
+                        redraw_repl_input(prompt, line, cursor);
+                    }
+                    break;
+                }
+                if (line.empty()) {
+                    std::cout << "\r\n" << std::flush;
+                    return {ReplLineReadStatus::Submitted, std::string{"\x1b"} + escape.sequence};
+                }
+                break;
+            }
+            default:
+                if (read.byte < 32 || read.byte == '\t') {
+                    break;
+                }
+                line.insert(line.begin() + static_cast<std::ptrdiff_t>(cursor),
+                            static_cast<char>(read.byte));
+                ++cursor;
+                redraw_repl_input(prompt, line, cursor);
+                break;
+        }
+    }
+}
+#endif
+
+ReplLineReadResult read_repl_line(const std::string& prompt,
+                                  detail::ReplInputHistory& history) {
+#if defined(_WIN32)
+    (void)history;
+    return read_repl_line_with_getline(prompt);
+#else
+    return read_repl_line_with_history(prompt, history);
+#endif
+}
 
 void print_approval_request(const std::string& tool_name,
                             const nlohmann::json& args,
@@ -172,6 +541,7 @@ json run_result_json(const RunResult& result) {
         {"error", result.error.has_value() ? json(*result.error) : json(nullptr)},
         {"pause_reason", result.pause_reason.has_value() ? json(*result.pause_reason) : json(nullptr)},
         {"pending_approval", nullptr},
+        {"pending_clarification", nullptr},
     };
 
     if (result.pending_approval.has_value()) {
@@ -179,6 +549,29 @@ json run_result_json(const RunResult& result) {
             {"tool_name", result.pending_approval->tool_name},
             {"args", result.pending_approval->args},
             {"description", result.pending_approval->description},
+        };
+    }
+    if (result.pending_clarification.has_value()) {
+        json questions = json::array();
+        for (const auto& question : result.pending_clarification->questions) {
+            questions.push_back({
+                {"id", question.id},
+                {"stage", question.stage},
+                {"severity", question.severity},
+                {"quote", question.quote},
+                {"question", question.question},
+                {"recommended_default", question.recommended_default},
+                {"answer_type", question.answer_type},
+                {"options", question.options},
+            });
+        }
+        payload["pending_clarification"] = {
+            {"tool_name", result.pending_clarification->tool_name},
+            {"clarification_mode", result.pending_clarification->clarification_mode},
+            {"clarification_message", result.pending_clarification->clarification_message},
+            {"pending_question_ids", result.pending_clarification->pending_question_ids},
+            {"questions", std::move(questions)},
+            {"raw_payload", result.pending_clarification->raw_payload},
         };
     }
 
@@ -198,12 +591,22 @@ enum class RunWaitOutcome {
 RunWaitOutcome wait_for_run_block_or_finish(ProjectEngineHost& host,
                                             const std::string& run_id,
                                             std::function<void()> on_running = {},
+                                            std::function<void(int)> on_interrupt = {},
                                             std::chrono::milliseconds timeout = std::chrono::milliseconds::zero()) {
     const bool has_timeout = timeout.count() > 0;
     const auto deadline = has_timeout
         ? std::chrono::steady_clock::now() + timeout
         : std::chrono::steady_clock::time_point::max();
+    int handled_interrupts = 0;
     while (std::chrono::steady_clock::now() < deadline) {
+        const int pending_interrupts = take_cli_interrupt_requests();
+        for (int index = 0; index < pending_interrupts; ++index) {
+            ++handled_interrupts;
+            if (on_interrupt) {
+                on_interrupt(handled_interrupts);
+            }
+        }
+
         const auto run = host.get_run(run_id);
         if (!run.has_value()) {
             return RunWaitOutcome::Missing;
@@ -242,34 +645,50 @@ public:
             last_activity_at_ = wait_started_at_;
             last_status_at_ = wait_started_at_;
             printed_thinking_ = false;
-            std::cout << "\n[run started: " << started->run_id << "]\n" << std::flush;
         } else if (const auto* text = std::get_if<TextDeltaEvent>(&event)) {
             note_activity_locked();
+            flush_status_line_locked();
             std::cout << text->text << std::flush;
         } else if (std::holds_alternative<ThinkingDeltaEvent>(event)) {
+            note_activity_locked();
             if (!printed_thinking_) {
                 printed_thinking_ = true;
-                note_activity_locked();
                 last_status_at_ = last_activity_at_;
-                std::cout << "\n[thinking]\n" << std::flush;
+                print_status_locked(detail::format_activity_status());
             }
         } else if (const auto* error = std::get_if<ErrorEvent>(&event)) {
             note_activity_locked();
+            flush_status_line_locked();
             std::cerr << "\nerror: " << error->message << '\n';
         } else if (const auto* tool = std::get_if<ToolUseStartEvent>(&event)) {
             note_activity_locked();
-            std::cout << "\n[tool] " << tool->name << '\n';
+            print_status_locked(
+                detail::format_activity_status(detail::tool_indicator_text(tool->name,
+                                                                           tool->input)));
+        } else if (const auto* clarification = std::get_if<ClarificationRequestedEvent>(&event)) {
+            note_activity_locked();
+            flush_status_line_locked();
+            RunResult result;
+            result.run_id = clarification->context.run_id;
+            result.pending_clarification = clarification->clarification;
+            pending_clarification_ = detail::pending_clarification_state_from_run(result);
+            if (pending_clarification_.has_value()) {
+                std::cout << "\n[clarification required] "
+                          << pending_clarification_->questions.size()
+                          << " question(s) pending\n" << std::flush;
+            }
         } else if (const auto* agent = std::get_if<AgentSpawnedEvent>(&event)) {
             note_activity_locked();
-            std::cout << "\n[agent] " << agent->profile << " " << agent->agent_id << " started\n" << std::flush;
+            print_status_locked(
+                detail::format_activity_status(detail::agent_indicator_text(agent->profile)));
         } else if (const auto* agent = std::get_if<AgentCompletedEvent>(&event)) {
             note_activity_locked();
-            std::cout << "\n[agent] " << agent->agent_id
-                      << (agent->success ? " completed" : " failed")
-                      << '\n' << std::flush;
-        } else if (const auto* paused = std::get_if<RunPausedEvent>(&event)) {
+            print_status_locked(
+                detail::format_activity_status(
+                    detail::agent_completion_indicator_text(agent->success)));
+        } else if (std::get_if<RunPausedEvent>(&event) != nullptr) {
             note_activity_locked();
-            std::cout << "\n[run paused: " << paused->run_id << "]\n" << std::flush;
+            print_status_locked(detail::run_paused_indicator_text());
         }
     }
 
@@ -282,7 +701,7 @@ public:
             last_activity_at_ = now;
             last_status_at_ = now;
             printed_thinking_ = false;
-            std::cout << "\n[run started: " << run_id << "]\n" << std::flush;
+            print_status_locked(detail::run_started_indicator_text());
             return;
         }
         if (now - last_status_at_ < 2s) {
@@ -292,13 +711,18 @@ public:
             && now - last_activity_at_ < 2s) {
             return;
         }
-        const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(now - wait_started_at_).count();
-        std::cout << "\n[still working " << seconds << "s]\n" << std::flush;
+        if (!printed_thinking_) {
+            printed_thinking_ = true;
+            print_status_locked(detail::format_activity_status());
+        } else {
+            print_status_locked(detail::activity_tick_text());
+        }
         last_status_at_ = now;
     }
 
     void finish_waiting() {
         std::lock_guard<std::mutex> lock(mutex_);
+        flush_status_line_locked();
         active_run_id_.clear();
         printed_thinking_ = false;
         wait_started_at_ = std::chrono::steady_clock::time_point{};
@@ -306,7 +730,48 @@ public:
         last_status_at_ = std::chrono::steady_clock::time_point{};
     }
 
+    std::optional<detail::PendingClarificationState> pending_clarification(
+        const std::string& run_id) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!pending_clarification_.has_value() || pending_clarification_->run_id != run_id) {
+            return std::nullopt;
+        }
+        return pending_clarification_;
+    }
+
+    void print_notice(const std::string& text) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        flush_status_line_locked();
+        std::cout << text << '\n' << std::flush;
+    }
+
 private:
+    void print_status_locked(const std::string& text) {
+        if (status_line_open_ && status_line_text_ == text) {
+            return;
+        }
+
+        const std::size_t previous_width = status_line_width_;
+        status_line_open_ = true;
+        std::cout << '\r' << text;
+        if (text.size() < previous_width) {
+            std::cout << std::string(previous_width - text.size(), ' ');
+        }
+        std::cout << std::flush;
+        status_line_text_ = text;
+        status_line_width_ = text.size();
+    }
+
+    void flush_status_line_locked() {
+        if (!status_line_open_) {
+            return;
+        }
+        std::cout << '\n' << std::flush;
+        status_line_open_ = false;
+        status_line_text_.clear();
+        status_line_width_ = 0;
+    }
+
     void note_activity_locked() {
         last_activity_at_ = std::chrono::steady_clock::now();
     }
@@ -317,7 +782,27 @@ private:
     std::chrono::steady_clock::time_point last_activity_at_{};
     std::chrono::steady_clock::time_point last_status_at_{};
     bool printed_thinking_ = false;
+    bool status_line_open_ = false;
+    std::string status_line_text_;
+    std::size_t status_line_width_ = 0;
+    std::optional<detail::PendingClarificationState> pending_clarification_;
 };
+
+void request_interrupt_action(ProjectEngineHost& host,
+                              const std::string& run_id,
+                              TerminalObserver& observer,
+                              int interrupt_count) {
+    if (interrupt_count <= 1) {
+        if (host.stop_run(run_id)) {
+            observer.print_notice("[stop requested; press Ctrl-C again to cancel]");
+        }
+        return;
+    }
+
+    if (host.cancel_run(run_id)) {
+        observer.print_notice("[cancel requested]");
+    }
+}
 
 class PolicyApprovals : public ApprovalDelegate {
 public:
@@ -363,14 +848,31 @@ ProjectRuntimeConfig build_config(const CliOptions& options) {
     config.workspace.workspace_root = options.workspace_root;
     config.workspace.working_dir = options.working_dir.value_or(options.workspace_root);
     config.engine.session_storage_dir = options.storage_dir.value_or(default_storage_dir(options));
+    config.engine.temperature = options.temperature;
+    config.engine.top_p = options.top_p;
+    config.engine.top_k = options.top_k;
+    config.engine.min_p = options.min_p;
+    config.engine.presence_penalty = options.presence_penalty;
+    config.engine.frequency_penalty = options.frequency_penalty;
+    if (options.max_tokens.has_value()) {
+        config.engine.initial_max_tokens = *options.max_tokens;
+    }
     config.project_tools = make_default_workspace_tools();
     config.provider_factory = [base_url = options.base_url,
                                model = options.model,
-                               api_key = options.api_key]() {
+                               api_key = options.api_key,
+                               max_context_tokens = options.max_context_tokens,
+                               max_tokens = options.max_tokens]() {
         HttpProviderConfig provider_config;
         provider_config.base_url = base_url;
         provider_config.model = model;
         provider_config.api_key = api_key;
+        if (max_context_tokens.has_value()) {
+            provider_config.max_context_tokens = *max_context_tokens;
+        }
+        if (max_tokens.has_value()) {
+            provider_config.max_output_tokens = *max_tokens;
+        }
         return std::make_unique<HttpProvider>(provider_config);
     };
     return config;
@@ -378,41 +880,33 @@ ProjectRuntimeConfig build_config(const CliOptions& options) {
 
 std::string prompt_for_session(ProjectSession& session) {
     const auto snapshot = session.snapshot();
-    return "[" + snapshot.project_id + ":" + snapshot.session_id + ":"
-        + snapshot.active_profile + ":" + snapshot.working_dir.string() + "]> ";
+    return detail::format_project_prompt(snapshot.project_id);
 }
 
 std::string prompt_for_session(ProjectSession& session,
-                               const std::optional<std::string>& active_run_id) {
-    if (!active_run_id.has_value()) {
-        return prompt_for_session(session);
-    }
-
-    const auto snapshot = session.snapshot();
-    return "[" + snapshot.project_id + ":" + snapshot.session_id + ":"
-        + snapshot.active_profile + ":paused:" + *active_run_id + "]> ";
+                               const std::optional<std::string>&,
+                               const std::optional<detail::PendingClarificationState>&) {
+    return prompt_for_session(session);
 }
 
 void print_help() {
-    std::cout
-        << "/help                show this help\n"
-        << "/profile <name>      switch profiles\n"
-        << "/tools               show visible tools for the current session\n"
-        << "/sessions            list sessions\n"
-        << "/runs                list persisted runs\n"
-        << "/inspect run [id]    inspect the current or named run\n"
-        << "/use <session-id>    attach to another session\n"
-        << "/reset               clear the current session history\n"
-        << "/rewind [count]      remove one or more most recent messages\n"
-        << "/fork [session-id]   clone current session history into a new session\n"
-        << "/clear               clear the terminal\n"
-        << "/cwd [path]          show or reopen the session at a different working dir\n"
-        << "/model [name]        show or reopen the host with a different model\n"
-        << "/resume [decision]   resume a paused run (default: approve)\n"
-        << "/stop [run-id]       stop the current or named run\n"
-        << "/cancel [run-id]     cancel the paused run\n"
-        << "F6/F7/F8             aliases for /rewind 1, /fork, /stop\n"
-        << "/quit                exit the CLI\n";
+    std::cout << repl_help_text();
+}
+
+void print_pending_clarifications(const std::optional<detail::PendingClarificationState>& state) {
+    if (!state.has_value()) {
+        std::cout << "no pending clarifications\n";
+        return;
+    }
+    std::cout << detail::format_clarifications(*state);
+}
+
+void print_staged_clarification_answers(const std::optional<detail::PendingClarificationState>& state) {
+    if (!state.has_value()) {
+        std::cout << "no pending clarifications\n";
+        return;
+    }
+    std::cout << detail::format_staged_answers(*state);
 }
 
 void print_tools(ProjectSession& session) {
@@ -472,7 +966,8 @@ void submit_and_wait(ProjectEngineHost& host,
                      const std::string& input,
                      TerminalObserver& observer,
                      ApprovalDelegate& approvals,
-                     std::optional<std::string>& active_run_id) {
+                     std::optional<std::string>& active_run_id,
+                     std::optional<detail::PendingClarificationState>& pending_clarification) {
     auto run = session.submit_turn(input, observer, approvals);
     active_run_id = run->run_id();
     const std::string run_id = *active_run_id;
@@ -480,21 +975,29 @@ void submit_and_wait(ProjectEngineHost& host,
     const auto outcome = wait_for_run_block_or_finish(
         host,
         run_id,
-        [&observer, run_id]() { observer.note_wait_tick(run_id); });
+        [&observer, run_id]() { observer.note_wait_tick(run_id); },
+        [&host, &observer, run_id](int interrupt_count) {
+            request_interrupt_action(host, run_id, observer, interrupt_count);
+        });
     if (outcome == RunWaitOutcome::Paused) {
+        pending_clarification = observer.pending_clarification(run_id);
+        if (!pending_clarification.has_value()) {
+            if (const auto result = host.get_run(run_id); result.has_value()) {
+                pending_clarification = detail::pending_clarification_state_from_run(*result);
+            }
+        }
         observer.finish_waiting();
-        std::cout << "\nrun paused: " << run_id << '\n';
         return;
     }
 
     run->wait();
 
-    if (const auto result = host.get_run(*active_run_id); result.has_value()) {
-        if (result->status != RunStatus::Completed && result->error.has_value()) {
-            std::cerr << "\nerror: " << *result->error << '\n';
+    pending_clarification = observer.pending_clarification(run_id);
+    if (!pending_clarification.has_value()) {
+        if (const auto result = host.get_run(run_id); result.has_value()) {
+            pending_clarification = detail::pending_clarification_state_from_run(*result);
         }
     }
-
     observer.finish_waiting();
     active_run_id.reset();
     std::cout << '\n';
@@ -504,7 +1007,8 @@ void resolve_paused_run(ProjectEngineHost& host,
                         const std::string& run_id,
                         const std::string& decision,
                         TerminalObserver& observer,
-                        std::optional<std::string>& active_run_id) {
+                        std::optional<std::string>& active_run_id,
+                        std::optional<detail::PendingClarificationState>& pending_clarification) {
     if (!host.resume_run(run_id, decision)) {
         throw std::runtime_error("paused run not found: " + run_id);
     }
@@ -512,14 +1016,28 @@ void resolve_paused_run(ProjectEngineHost& host,
     const auto outcome = wait_for_run_block_or_finish(
         host,
         run_id,
-        [&observer, run_id]() { observer.note_wait_tick(run_id); });
+        [&observer, run_id]() { observer.note_wait_tick(run_id); },
+        [&host, &observer, run_id](int interrupt_count) {
+            request_interrupt_action(host, run_id, observer, interrupt_count);
+        });
     if (outcome == RunWaitOutcome::Paused) {
+        pending_clarification = observer.pending_clarification(run_id);
+        if (!pending_clarification.has_value()) {
+            if (const auto result = host.get_run(run_id); result.has_value()) {
+                pending_clarification = detail::pending_clarification_state_from_run(*result);
+            }
+        }
         observer.finish_waiting();
-        std::cout << "run paused again: " << run_id << '\n';
         active_run_id = run_id;
         return;
     }
 
+    pending_clarification = observer.pending_clarification(run_id);
+    if (!pending_clarification.has_value()) {
+        if (const auto result = host.get_run(run_id); result.has_value()) {
+            pending_clarification = detail::pending_clarification_state_from_run(*result);
+        }
+    }
     observer.finish_waiting();
     active_run_id.reset();
     if (const auto result = host.get_run(run_id); result.has_value()) {
@@ -558,6 +1076,7 @@ std::optional<std::string> function_key_alias_command(const std::string& line) {
 }
 
 int run_once(ProjectEngineHost& host, const CliOptions& options) {
+    ScopedCliSignalHandler signal_scope;
     TerminalObserver observer;
 
     SessionOptions session_options;
@@ -577,7 +1096,10 @@ int run_once(ProjectEngineHost& host, const CliOptions& options) {
     const auto outcome = wait_for_run_block_or_finish(
         host,
         run_id,
-        [&observer, run_id]() { observer.note_wait_tick(run_id); });
+        [&observer, run_id]() { observer.note_wait_tick(run_id); },
+        [&host, &observer, run_id](int interrupt_count) {
+            request_interrupt_action(host, run_id, observer, interrupt_count);
+        });
     if (outcome != RunWaitOutcome::Paused) {
         run->wait();
     }
@@ -614,6 +1136,7 @@ int run_inspect(ProjectEngineHost& host, const CliOptions& options) {
 }
 
 int run_resume(ProjectEngineHost& host, const CliOptions& options) {
+    ScopedCliSignalHandler signal_scope;
     if (!options.run_id.has_value()) {
         throw std::invalid_argument("resume mode requires --run-id");
     }
@@ -628,7 +1151,10 @@ int run_resume(ProjectEngineHost& host, const CliOptions& options) {
     const auto outcome = wait_for_run_block_or_finish(
         host,
         *options.run_id,
-        [&observer, run_id = *options.run_id]() { observer.note_wait_tick(run_id); });
+        [&observer, run_id = *options.run_id]() { observer.note_wait_tick(run_id); },
+        [&host, &observer, run_id = *options.run_id](int interrupt_count) {
+            request_interrupt_action(host, run_id, observer, interrupt_count);
+        });
     observer.finish_waiting();
     const auto result = host.get_run(*options.run_id);
     if (result.has_value()) {
@@ -638,8 +1164,10 @@ int run_resume(ProjectEngineHost& host, const CliOptions& options) {
 }
 
 int run_repl(ProjectEngineHost& host, const CliOptions& options) {
+    ScopedCliSignalHandler signal_scope;
     CliOptions state = options;
     TerminalObserver observer;
+    const auto history_storage_dir = state.storage_dir.value_or(default_storage_dir(state));
 
     SessionOptions session_options;
     session_options.profile = state.profile;
@@ -649,16 +1177,23 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
         : host.open_session(session_options);
     auto approvals = make_approval_delegate(state, *session, CliApprovalPolicy::Pause);
     std::optional<std::string> active_run_id;
+    std::optional<detail::PendingClarificationState> pending_clarification;
+    detail::ReplInputHistory input_history = detail::load_persisted_repl_history(history_storage_dir);
     bool printed_fn_key_fallback = false;
+    bool printed_history_warning = false;
 
     for (;;) {
-        std::cout << prompt_for_session(*session, active_run_id) << std::flush;
-
-        std::string line;
-        if (!std::getline(std::cin, line)) {
-            std::cout << '\n';
+        take_cli_interrupt_requests();
+        auto input = read_repl_line(prompt_for_session(*session, active_run_id, pending_clarification),
+                                    input_history);
+        if (input.status == ReplLineReadStatus::Interrupted) {
+            continue;
+        }
+        if (input.status == ReplLineReadStatus::Eof) {
             return 0;
         }
+
+        std::string line = std::move(input.line);
 
         if (const auto alias = function_key_alias_command(line); alias.has_value()) {
             line = *alias;
@@ -674,6 +1209,16 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
             continue;
         }
 
+        detail::remember_repl_history_entry(input_history, line);
+        try {
+            detail::persist_repl_history(history_storage_dir, input_history);
+        } catch (const std::exception& error) {
+            if (!printed_history_warning) {
+                printed_history_warning = true;
+                std::cerr << "warning: " << error.what() << '\n';
+            }
+        }
+
         if (line[0] == '/') {
             std::istringstream stream(line.substr(1));
             std::string command;
@@ -687,8 +1232,8 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
                 continue;
             }
             if (command == "reset") {
-                if (active_run_id.has_value()) {
-                    std::cerr << "resolve the paused run before resetting the session\n";
+                if (active_run_id.has_value() || pending_clarification.has_value()) {
+                    std::cerr << "resolve the paused run or pending clarifications before resetting the session\n";
                     continue;
                 }
                 session->reset();
@@ -746,6 +1291,7 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
                     state.working_dir = session->snapshot().working_dir;
                     approvals = make_approval_delegate(state, *session, CliApprovalPolicy::Pause);
                     active_run_id.reset();
+                    pending_clarification.reset();
                     std::cout << "forked session " << source_session_id
                               << " -> " << session->session_id() << '\n';
                 } catch (const std::exception& error) {
@@ -782,9 +1328,44 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
                 }
                 continue;
             }
+            if (command == "clarifications") {
+                print_pending_clarifications(pending_clarification);
+                continue;
+            }
+            if (command == "answer") {
+                if (!pending_clarification.has_value()) {
+                    std::cerr << "no pending clarifications\n";
+                    continue;
+                }
+
+                std::string question_id;
+                stream >> question_id;
+                std::string value;
+                std::getline(stream, value);
+                value = detail::trim_copy(std::move(value));
+                if (question_id.empty() || value.empty()) {
+                    std::cerr << "usage: /answer <id> <text>\n";
+                    continue;
+                }
+                if (const auto* question = detail::find_question(*pending_clarification, question_id);
+                    question == nullptr) {
+                    std::cerr << "unknown clarification id: " << question_id << '\n';
+                    continue;
+                }
+                pending_clarification->staged_answers[question_id] = value;
+                if (detail::is_delegate_phrase(value)) {
+                    pending_clarification->delegate_unanswered = true;
+                }
+                std::cout << "staged answer for " << question_id << '\n';
+                continue;
+            }
+            if (command == "answers") {
+                print_staged_clarification_answers(pending_clarification);
+                continue;
+            }
             if (command == "use") {
-                if (active_run_id.has_value()) {
-                    std::cerr << "resolve the paused run before switching sessions\n";
+                if (active_run_id.has_value() || pending_clarification.has_value()) {
+                    std::cerr << "resolve the paused run or pending clarifications before switching sessions\n";
                     continue;
                 }
                 std::string target_session;
@@ -797,11 +1378,12 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
                 session = host.resume_session(target_session);
                 state.session_id = target_session;
                 approvals = make_approval_delegate(state, *session, CliApprovalPolicy::Pause);
+                pending_clarification.reset();
                 continue;
             }
             if (command == "profile") {
-                if (active_run_id.has_value()) {
-                    std::cerr << "resolve the paused run before switching profiles\n";
+                if (active_run_id.has_value() || pending_clarification.has_value()) {
+                    std::cerr << "resolve the paused run or pending clarifications before switching profiles\n";
                     continue;
                 }
                 std::string profile;
@@ -826,8 +1408,8 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
                     std::cout << session->snapshot().working_dir.string() << '\n';
                     continue;
                 }
-                if (active_run_id.has_value()) {
-                    std::cerr << "resolve the paused run before changing the working directory\n";
+                if (active_run_id.has_value() || pending_clarification.has_value()) {
+                    std::cerr << "resolve the paused run or pending clarifications before changing the working directory\n";
                     continue;
                 }
                 const auto profile_name = session->active_profile();
@@ -840,6 +1422,7 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
                     .working_dir_override = state.working_dir,
                 });
                 approvals = make_approval_delegate(state, *session, CliApprovalPolicy::Pause);
+                pending_clarification.reset();
                 continue;
             }
             if (command == "model") {
@@ -849,8 +1432,8 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
                     std::cout << state.model << '\n';
                     continue;
                 }
-                if (active_run_id.has_value()) {
-                    std::cerr << "resolve the paused run before changing models\n";
+                if (active_run_id.has_value() || pending_clarification.has_value()) {
+                    std::cerr << "resolve the paused run or pending clarifications before changing models\n";
                     continue;
                 }
                 state.model = model;
@@ -863,9 +1446,14 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
                     .working_dir_override = state.working_dir,
                 });
                 approvals = make_approval_delegate(state, *session, CliApprovalPolicy::Pause);
+                pending_clarification.reset();
                 continue;
             }
             if (command == "resume") {
+                if (pending_clarification.has_value()) {
+                    std::cerr << "use /continue for clarification-paused runs\n";
+                    continue;
+                }
                 try {
                     const std::string decision = [&]() {
                         std::string value;
@@ -878,10 +1466,36 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
                                                       stream),
                                        decision,
                                        observer,
-                                       active_run_id);
+                                       active_run_id,
+                                       pending_clarification);
                 } catch (const std::exception& error) {
                     std::cerr << error.what() << '\n';
                 }
+                continue;
+            }
+            if (command == "continue") {
+                if (!pending_clarification.has_value()) {
+                    std::cerr << "no pending clarifications\n";
+                    continue;
+                }
+
+                std::string mode;
+                stream >> mode;
+                if (!mode.empty() && detail::is_delegate_phrase(mode)) {
+                    pending_clarification->delegate_unanswered = true;
+                }
+
+                const std::string input = detail::build_clarification_resume_input(*pending_clarification);
+                if (input.empty()) {
+                    std::cerr << "stage at least one answer with /answer or use /continue delegate\n";
+                    continue;
+                }
+                resolve_paused_run(host,
+                                   pending_clarification->run_id,
+                                   input,
+                                   observer,
+                                   active_run_id,
+                                   pending_clarification);
                 continue;
             }
             if (command == "cancel") {
@@ -895,6 +1509,7 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
                     }
                     (void)wait_for_run_block_or_finish(host, run_id);
                     active_run_id.reset();
+                    pending_clarification.reset();
                     print_run(host, run_id);
                 } catch (const std::exception& error) {
                     std::cerr << error.what() << '\n';
@@ -912,6 +1527,7 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
                     }
                     (void)wait_for_run_block_or_finish(host, run_id);
                     active_run_id.reset();
+                    pending_clarification.reset();
                     print_run(host, run_id);
                 } catch (const std::exception& error) {
                     std::cerr << error.what() << '\n';
@@ -923,16 +1539,75 @@ int run_repl(ProjectEngineHost& host, const CliOptions& options) {
             continue;
         }
 
-        if (active_run_id.has_value()) {
+        if (active_run_id.has_value() && !pending_clarification.has_value()) {
             std::cerr << "resolve the paused run before submitting another turn\n";
             continue;
         }
 
-        submit_and_wait(host, *session, line, observer, *approvals, active_run_id);
+        if (pending_clarification.has_value()) {
+            std::string input = line;
+            if (detail::is_delegate_phrase(line)) {
+                pending_clarification->delegate_unanswered = true;
+                const std::string delegated_input =
+                    detail::build_clarification_resume_input(*pending_clarification);
+                if (!delegated_input.empty()) {
+                    input = delegated_input;
+                }
+            }
+            resolve_paused_run(host,
+                               pending_clarification->run_id,
+                               input,
+                               observer,
+                               active_run_id,
+                               pending_clarification);
+            continue;
+        }
+
+        submit_and_wait(host,
+                        *session,
+                        line,
+                        observer,
+                        *approvals,
+                        active_run_id,
+                        pending_clarification);
     }
 }
 
 }  // namespace
+
+std::string repl_help_text() {
+    std::ostringstream stream;
+    stream
+        << "/help                show this help\n"
+        << "/profile <name>      switch profiles\n"
+        << "/tools               show visible tools for the current session\n"
+        << "/sessions            list sessions\n"
+        << "/runs                list persisted runs\n"
+        << "/inspect run [id]    inspect the current or named run\n"
+        << "/clarifications      show pending clarification questions\n"
+        << "/answer <id> <text>  stage one clarification answer\n"
+        << "/answers             show staged clarification answers\n"
+        << "/use <session-id>    attach to another session\n"
+        << "/reset               clear the current session history\n"
+        << "/rewind [count]      remove one or more most recent messages\n"
+        << "/fork [session-id]   clone current session history into a new session\n"
+        << "/clear               clear the terminal\n"
+        << "/cwd [path]          show or reopen the session at a different working dir\n"
+        << "/model [name]        show or reopen the host with a different model\n"
+        << "/resume [decision]   resume a paused run (default: approve)\n"
+        << "/continue [delegate] resume the paused clarification run with staged answers\n"
+        << "/stop [run-id]       stop the current or named run\n"
+        << "/cancel [run-id]     cancel the current or named run\n"
+        << "Up/Down arrows       traverse persisted input history\n"
+        << "F6/F7/F8             aliases for /rewind 1, /fork, /stop\n"
+        << "Ctrl-C               stop the active run; press again to cancel\n"
+        << "/quit                exit the CLI\n";
+    append_workflow_help(stream,
+                         "Profiles: ",
+                         "Workflow smoke prompts:",
+                         "  /profile ");
+    return stream.str();
+}
 
 std::string usage_text(const char* program_name) {
     std::ostringstream stream;
@@ -949,6 +1624,23 @@ std::string usage_text(const char* program_name) {
         << "  --approval-policy <mode>  prompt, pause, auto-read-only, or auto-read-only-pause\n"
         << "  --resume-input <v>   Resume decision for resume mode (default: approve)\n"
         << "  --api-key <value>    Provider API key\n"
+        << "  --max-context-tokens <n>  Context window hint/floor for compaction\n"
+        << "  --temperature <n>    Provider temperature override\n"
+        << "  --top-p <n>          Provider top-p override\n"
+        << "  --top-k <n>          Local-provider top-k override\n"
+        << "  --min-p <n>          Local-provider min-p override\n"
+        << "  --presence-penalty <n>  Provider presence-penalty override\n"
+        << "  --frequency-penalty <n> Provider frequency-penalty override\n"
+        << "  --max-tokens <n>     Max output tokens per request\n"
+        << "  Supported profiles: ";
+    stream << supported_profile_names_text() << '\n';
+    stream
+        << "  Workflow smoke examples:\n";
+    for (const auto& example : kWorkflowSmokeExamples) {
+        stream << "    --profile " << example.profile << " --prompt \""
+               << example.prompt << "\"\n";
+    }
+    stream
         << "  Delegated web research uses BRAVE_SEARCH_KEY when web_search is available.\n"
         << "  --help               Show this message\n";
     return stream.str();

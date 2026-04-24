@@ -25,6 +25,7 @@ struct AgentProfileManifest {
     ToolCapabilityPolicy tool_policy;
     PermissionMode default_permission_mode = PermissionMode::Default;
     bool sub_agents_allowed = false;
+    bool enforce_evidence_based_final_answer = false;
     int max_parallel_tools = 10;
 };
 

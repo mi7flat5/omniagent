@@ -103,6 +103,38 @@ TEST(PermissionChecker, AcceptEditsMode) {
 }
 
 // ---------------------------------------------------------------------------
+// PlanMode_ReadOnlyTools_AutoAllow: safe read-only tools are auto-allowed
+// ---------------------------------------------------------------------------
+
+TEST(PermissionChecker, PlanMode_ReadOnlyTools_AutoAllow) {
+    PCDenyDelegate delegate;
+    PermissionChecker checker(delegate);
+    checker.set_mode(PermissionMode::Plan);
+
+    const auto decision = checker.check(
+        "read_file", {}, "read project file", true, false);
+
+    EXPECT_EQ(decision, PermissionDecision::Allow);
+    EXPECT_EQ(delegate.call_count, 0);
+}
+
+// ---------------------------------------------------------------------------
+// PlanMode_NonReadOnly_UsesDelegate: state-changing tools still ask delegate
+// ---------------------------------------------------------------------------
+
+TEST(PermissionChecker, PlanMode_NonReadOnly_UsesDelegate) {
+    PCAllowDelegate delegate;
+    PermissionChecker checker(delegate);
+    checker.set_mode(PermissionMode::Plan);
+
+    const auto decision = checker.check(
+        "bash", {}, "run command", false, true);
+
+    EXPECT_EQ(decision, PermissionDecision::Allow);
+    EXPECT_EQ(delegate.call_count, 1);
+}
+
+// ---------------------------------------------------------------------------
 // DenyRule_BlocksTool: Deny rule for "bash" → Deny even in Default mode
 // ---------------------------------------------------------------------------
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <omni/approval.h>
+#include <omni/run.h>
 #include <omni/types.h>
 
 #include <chrono>
@@ -107,6 +108,11 @@ struct ApprovalResolvedEvent {
     EventContext context;
 };
 
+struct ClarificationRequestedEvent {
+    PendingClarification clarification;
+    EventContext context;
+};
+
 struct UsageUpdatedEvent {
     Usage delta;
     Usage cumulative;
@@ -125,6 +131,7 @@ using Event = std::variant<
     RunStartedEvent, RunPausedEvent, RunResumedEvent, RunStoppedEvent,
     RunCancelledEvent, SessionResetEvent, AgentSpawnedEvent,
     AgentCompletedEvent, ApprovalRequestedEvent, ApprovalResolvedEvent,
+    ClarificationRequestedEvent,
     UsageUpdatedEvent, CompactionEvent
 >;
 

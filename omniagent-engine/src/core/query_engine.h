@@ -12,6 +12,7 @@
 #include "../services/session_persistence.h"
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,9 +24,17 @@ struct QueryEngineConfig {
     int         max_turns             = 50;
     int         max_retries           = 3;
     int         preserve_tail         = 4;
-    int         max_result_chars      = 500;
+    int         max_result_chars      = 50000;
+    int         compact_max_result_chars = 500;
+    std::optional<double> temperature;
+    std::optional<double> top_p;
+    std::optional<int> top_k;
+    std::optional<double> min_p;
+    std::optional<double> presence_penalty;
+    std::optional<double> frequency_penalty;
     int         initial_max_tokens    = 8192;
     bool        max_tokens_escalation = true;
+    bool        enforce_evidence_based_final_answer = false;
     std::string system_prompt;
     int         max_parallel_tools    = 10;
 
@@ -65,14 +74,18 @@ public:
     /// Attach a memory loader (non-owning). Loaded context is prepended to system prompt.
     void set_memory_loader(MemoryLoader* memory_loader);
 
-    /// Restrict which tools are included in requests. Empty = all tools.
+    /// Restrict which tools are included in requests. Nullopt = all tools, empty = no tools.
     void set_tool_filter(std::vector<std::string> allowed);
     void set_tool_context(ToolContext context);
     void set_system_prompt(std::string system_prompt);
+    void set_evidence_based_final_answer(bool enabled);
     void set_max_parallel_tools(int max_parallel_tools);
 
 private:
     bool run_turn();
+    bool run_forced_final_answer_turn(const std::string& extra_instruction = {});
+    bool run_review_validation_recovery_turn(const std::string& draft_answer,
+                                             const std::string& validation_feedback);
     CompletionRequest build_request() const;
 
     std::unique_ptr<LLMProvider> provider_;
@@ -93,7 +106,11 @@ private:
     std::atomic<bool>            stop_requested_{false};
     bool                         last_turn_truncated_{false};
     bool                         reactive_compacted_this_turn_{false};
-    std::vector<std::string>     tool_filter_;  // empty = all tools
+    bool                         plain_text_finalization_mode_{false};
+    bool                         require_tool_call_on_next_turn_{false};
+    int                          review_validation_recovery_attempts_ = 0;
+    std::vector<std::string>     forced_finalization_recovery_tools_;
+    std::optional<std::vector<std::string>> tool_filter_;  // nullopt = all tools, empty = no tools
     ToolContext                  tool_context_;
 };
 

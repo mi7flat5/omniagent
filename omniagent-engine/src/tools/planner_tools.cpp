@@ -1,6 +1,7 @@
 #include "planner_tools.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
@@ -8,6 +9,7 @@
 #include <cstring>
 #include <fstream>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -32,6 +34,203 @@ constexpr std::size_t kMaxOutputBytes = 128 * 1024;
 
 ToolCallResult missing_context(const char* tool_name) {
     return {std::string(tool_name) + " requires a project workspace context.", true};
+}
+
+std::optional<fs::path> resolve_workspace_path(const fs::path& requested,
+                                               const ToolContext& context,
+                                               std::string& error,
+                                               bool allow_missing_leaf = false);
+
+enum class ValidationCaseKind {
+    Review,
+    Bugfix,
+};
+
+struct ScopedTempPath {
+    ScopedTempPath() = default;
+
+    explicit ScopedTempPath(fs::path value)
+        : path(std::move(value)) {}
+
+    ScopedTempPath(const ScopedTempPath&) = delete;
+    ScopedTempPath& operator=(const ScopedTempPath&) = delete;
+
+    ScopedTempPath(ScopedTempPath&& other) noexcept
+        : path(std::move(other.path)) {}
+
+    ScopedTempPath& operator=(ScopedTempPath&& other) noexcept {
+        if (this != &other) {
+            cleanup();
+            path = std::move(other.path);
+        }
+        return *this;
+    }
+
+    ~ScopedTempPath() {
+        cleanup();
+    }
+
+    void cleanup() {
+        if (path.empty()) {
+            return;
+        }
+        std::error_code ec;
+        fs::remove(path, ec);
+        path.clear();
+    }
+
+    fs::path path;
+};
+
+const char* validation_case_directory(ValidationCaseKind kind) {
+    switch (kind) {
+        case ValidationCaseKind::Review:
+            return "review";
+        case ValidationCaseKind::Bugfix:
+            return "bugfix";
+    }
+    return "review";
+}
+
+const char* validation_bridge_command(ValidationCaseKind kind) {
+    switch (kind) {
+        case ValidationCaseKind::Review:
+            return "validate-review";
+        case ValidationCaseKind::Bugfix:
+            return "validate-bugfix";
+    }
+    return "validate-review";
+}
+
+const char* validation_status_name(ValidationCaseKind kind) {
+    switch (kind) {
+        case ValidationCaseKind::Review:
+            return "PLANNER_VALIDATE_REVIEW";
+        case ValidationCaseKind::Bugfix:
+            return "PLANNER_VALIDATE_BUGFIX";
+    }
+    return "PLANNER_VALIDATE_REVIEW";
+}
+
+const char* validation_primary_flag(ValidationCaseKind kind) {
+    switch (kind) {
+        case ValidationCaseKind::Review:
+            return "review_validation_passed";
+        case ValidationCaseKind::Bugfix:
+            return "bugfix_validation_passed";
+    }
+    return "review_validation_passed";
+}
+
+std::string lowercase_copy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::optional<fs::path> getenv_path(const char* name) {
+    if (const char* raw = std::getenv(name)) {
+        if (*raw != '\0') {
+            return fs::path(raw);
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<fs::path> canonical_existing_file(const fs::path& candidate,
+                                                std::string& error) {
+    std::error_code ec;
+    const fs::path resolved = fs::weakly_canonical(candidate, ec);
+    if (ec) {
+        error = "failed to resolve path '" + candidate.string() + "': " + ec.message();
+        return std::nullopt;
+    }
+    if (!fs::exists(resolved)) {
+        error = "path does not exist: " + candidate.string();
+        return std::nullopt;
+    }
+    if (!fs::is_regular_file(resolved)) {
+        error = "path is not a file: " + candidate.string();
+        return std::nullopt;
+    }
+    return resolved;
+}
+
+std::optional<fs::path> resolve_file_relative_to(const fs::path& root,
+                                                 const fs::path& requested,
+                                                 std::string& error) {
+    fs::path candidate = requested;
+    if (candidate.is_relative()) {
+        candidate = root / candidate;
+    }
+    return canonical_existing_file(candidate, error);
+}
+
+std::optional<fs::path> resolve_workspace_or_external_file(const fs::path& requested,
+                                                           const ToolContext& context,
+                                                           std::string& error) {
+    if (requested.is_absolute()) {
+        return canonical_existing_file(requested, error);
+    }
+    return resolve_workspace_path(requested, context, error);
+}
+
+std::optional<fs::path> source_repo_root() {
+    fs::path source_path = fs::path(__FILE__);
+    for (int depth = 0; depth < 4 && !source_path.empty(); ++depth) {
+        source_path = source_path.parent_path();
+    }
+    if (source_path.empty()) {
+        return std::nullopt;
+    }
+    return source_path;
+}
+
+std::optional<fs::path> write_temp_text_file(const std::string& prefix,
+                                             const std::string& extension,
+                                             const std::string& content,
+                                             std::string& error) {
+    std::error_code ec;
+    fs::path temp_root = fs::temp_directory_path(ec);
+    if (ec) {
+        error = "failed to locate temp directory: " + ec.message();
+        return std::nullopt;
+    }
+
+    temp_root /= "omniagent-engine";
+    fs::create_directories(temp_root, ec);
+    if (ec) {
+        error = "failed to create temp directory '" + temp_root.string() + "': " + ec.message();
+        return std::nullopt;
+    }
+
+    thread_local std::mt19937_64 rng{std::random_device{}()};
+    std::uniform_int_distribution<unsigned long long> dist;
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path candidate = temp_root
+            / (prefix + "-" + std::to_string(stamp) + "-" + std::to_string(dist(rng)) + extension);
+        if (fs::exists(candidate)) {
+            continue;
+        }
+
+        std::ofstream stream(candidate, std::ios::binary | std::ios::trunc);
+        if (!stream.is_open()) {
+            continue;
+        }
+        stream << content;
+        if (!stream.good()) {
+            std::error_code remove_error;
+            fs::remove(candidate, remove_error);
+            error = "failed to write temporary file '" + candidate.string() + "'";
+            return std::nullopt;
+        }
+        return candidate;
+    }
+
+    error = "failed to create temporary validation file";
+    return std::nullopt;
 }
 
 bool path_within_root(const fs::path& root, const fs::path& candidate) {
@@ -83,7 +282,7 @@ std::optional<fs::path> canonical_working_dir(const ToolContext& context,
 std::optional<fs::path> resolve_workspace_path(const fs::path& requested,
                                                const ToolContext& context,
                                                std::string& error,
-                                               bool allow_missing_leaf = false) {
+                                               bool allow_missing_leaf) {
     const auto root = canonical_workspace_root(context, error);
     if (!root) {
         return std::nullopt;
@@ -317,9 +516,28 @@ std::optional<fs::path> locate_planner_bridge(const ToolContext& context,
         return std::nullopt;
     }
 
-    const fs::path direct = *root / "planner-harness" / "bridge.py";
-    if (fs::is_regular_file(direct)) {
-        return direct;
+    std::vector<fs::path> candidates;
+    if (const auto configured_bridge = getenv_path("OMNIAGENT_PLANNER_BRIDGE"); configured_bridge.has_value()) {
+        candidates.push_back(*configured_bridge);
+    }
+    candidates.push_back(*root / "planner-harness" / "bridge.py");
+    if (const auto repo_root = getenv_path("OMNIAGENT_REPO_ROOT"); repo_root.has_value()) {
+        candidates.push_back(*repo_root / "planner-harness" / "bridge.py");
+    }
+    if (const auto engine_root = getenv_path("OMNIAGENT_ENGINE_ROOT"); engine_root.has_value()) {
+        candidates.push_back(*engine_root / "planner-harness" / "bridge.py");
+        candidates.push_back(engine_root->parent_path() / "planner-harness" / "bridge.py");
+    }
+    if (const auto source_root = source_repo_root(); source_root.has_value()) {
+        candidates.push_back(*source_root / "planner-harness" / "bridge.py");
+    }
+
+    for (const auto& candidate : candidates) {
+        std::string candidate_error;
+        const auto bridge = canonical_existing_file(candidate, candidate_error);
+        if (bridge) {
+            return bridge;
+        }
     }
 
     std::error_code ec;
@@ -334,8 +552,166 @@ std::optional<fs::path> locate_planner_bridge(const ToolContext& context,
         }
     }
 
-    error = "could not locate planner-harness/bridge.py under the workspace root";
+    error = "could not locate planner-harness/bridge.py under the workspace root or OMNIAGENT_PLANNER_BRIDGE/OMNIAGENT_REPO_ROOT fallbacks";
     return std::nullopt;
+}
+
+std::optional<fs::path> locate_planner_harness_root(const ToolContext& context,
+                                                    std::string& error) {
+    const auto bridge = locate_planner_bridge(context, error);
+    if (!bridge) {
+        return std::nullopt;
+    }
+    return bridge->parent_path();
+}
+
+std::string case_filename_from_id(const std::string& case_id) {
+    return case_id.size() >= 5 && case_id.substr(case_id.size() - 5) == ".json"
+        ? case_id
+        : case_id + ".json";
+}
+
+std::optional<fs::path> resolve_tracked_case_path(ValidationCaseKind kind,
+                                                  const json& args,
+                                                  const ToolContext& context,
+                                                  std::string& error) {
+    const auto harness_root = locate_planner_harness_root(context, error);
+    if (!harness_root) {
+        return std::nullopt;
+    }
+    const fs::path case_root = *harness_root / "tests" / "data" / validation_case_directory(kind);
+
+    if (args.contains("case_path") && !args.at("case_path").is_null()) {
+        if (!args.at("case_path").is_string()) {
+            error = "'case_path' must be a string";
+            return std::nullopt;
+        }
+
+        const fs::path requested = fs::path(args.at("case_path").get<std::string>());
+        if (requested.is_absolute()) {
+            return canonical_existing_file(requested, error);
+        }
+
+        std::string workspace_error;
+        if (const auto workspace_path = resolve_workspace_path(requested, context, workspace_error)) {
+            return workspace_path;
+        }
+
+        std::string tracked_error;
+        const auto tracked_path = resolve_file_relative_to(case_root, requested, tracked_error);
+        if (tracked_path) {
+            return tracked_path;
+        }
+
+        error = tracked_error.empty() ? workspace_error : tracked_error;
+        return std::nullopt;
+    }
+
+    if (args.contains("case_id") && !args.at("case_id").is_null()) {
+        if (!args.at("case_id").is_string()) {
+            error = "'case_id' must be a string";
+            return std::nullopt;
+        }
+        const fs::path requested = case_filename_from_id(args.at("case_id").get<std::string>());
+        return resolve_file_relative_to(case_root, requested, error);
+    }
+
+    if (kind != ValidationCaseKind::Review) {
+        error = "either 'case_id' or 'case_path' is required";
+        return std::nullopt;
+    }
+
+    std::vector<std::string> tokens;
+    if (!context.project_id.empty()) {
+        tokens.push_back(lowercase_copy(context.project_id));
+    }
+    if (const auto workspace_root = canonical_workspace_root(context, error); workspace_root.has_value()) {
+        const std::string workspace_name = lowercase_copy(workspace_root->filename().string());
+        if (!workspace_name.empty()
+            && std::find(tokens.begin(), tokens.end(), workspace_name) == tokens.end()) {
+            tokens.push_back(workspace_name);
+        }
+    }
+
+    if (tokens.empty()) {
+        error = "could not infer a tracked review case from the workspace; provide 'case_id' or 'case_path'";
+        return std::nullopt;
+    }
+
+    std::vector<fs::path> matches;
+    std::error_code ec;
+    for (fs::directory_iterator it(case_root, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) {
+            ec.clear();
+            continue;
+        }
+        const fs::path candidate = it->path();
+        if (candidate.extension() != ".json") {
+            continue;
+        }
+
+        const std::string stem = lowercase_copy(candidate.stem().string());
+        const bool matched = std::any_of(tokens.begin(), tokens.end(), [&](const std::string& token) {
+            return !token.empty() && (stem.rfind(token, 0) == 0 || stem.find(token) != std::string::npos);
+        });
+        if (matched) {
+            matches.push_back(candidate);
+        }
+    }
+
+    if (matches.size() == 1) {
+        return canonical_existing_file(matches.front(), error);
+    }
+    if (matches.empty()) {
+        error = "no tracked review case matched the current workspace; provide 'case_id' or 'case_path'";
+        return std::nullopt;
+    }
+
+    error = "multiple tracked review cases matched the current workspace; provide 'case_id' or 'case_path'";
+    return std::nullopt;
+}
+
+std::optional<fs::path> resolve_validation_report_path(ValidationCaseKind kind,
+                                                       const json& args,
+                                                       const ToolContext& context,
+                                                       ScopedTempPath& temp_report,
+                                                       bool& used_inline_report,
+                                                       std::string& error) {
+    const bool has_report_path = args.contains("report_path") && !args.at("report_path").is_null();
+    const bool has_report_text = args.contains("report_text") && !args.at("report_text").is_null();
+    if (has_report_path == has_report_text) {
+        error = "exactly one of 'report_path' or 'report_text' must be provided";
+        return std::nullopt;
+    }
+
+    if (has_report_path) {
+        if (!args.at("report_path").is_string()) {
+            error = "'report_path' must be a string";
+            return std::nullopt;
+        }
+        return resolve_workspace_or_external_file(
+            fs::path(args.at("report_path").get<std::string>()),
+            context,
+            error);
+    }
+
+    if (!args.at("report_text").is_string()) {
+        error = "'report_text' must be a string";
+        return std::nullopt;
+    }
+
+    const auto temp_path = write_temp_text_file(
+        kind == ValidationCaseKind::Review ? "planner-review-report" : "planner-bugfix-report",
+        ".md",
+        args.at("report_text").get<std::string>(),
+        error);
+    if (!temp_path) {
+        return std::nullopt;
+    }
+
+    used_inline_report = true;
+    temp_report = ScopedTempPath(*temp_path);
+    return temp_report.path;
 }
 
 std::vector<std::string> python_candidates() {
@@ -725,6 +1101,20 @@ std::optional<fs::path> optional_workspace_path(const json& args,
     return resolve_workspace_path(fs::path(args.at(key).get<std::string>()), context, error, allow_missing_leaf);
 }
 
+std::optional<fs::path> optional_workspace_or_external_path(const json& args,
+                                                            const char* key,
+                                                            const ToolContext& context,
+                                                            std::string& error) {
+    if (!args.contains(key) || args.at(key).is_null()) {
+        return std::nullopt;
+    }
+    if (!args.at(key).is_string()) {
+        error = std::string{"'"} + key + "' must be a string";
+        return std::nullopt;
+    }
+    return resolve_workspace_or_external_file(fs::path(args.at(key).get<std::string>()), context, error);
+}
+
 int resolve_timeout(const json& args, int fallback) {
     if (!args.contains("timeout")) {
         return fallback;
@@ -746,6 +1136,23 @@ bool graph_validation_passed(const json& payload) {
     return payload.contains("graph_validation") && payload.at("graph_validation").is_object()
         ? payload.at("graph_validation").value("valid", false)
         : false;
+}
+
+bool clarification_required(const json& payload) {
+    if (payload.contains("clarification_required") && payload["clarification_required"].is_boolean()) {
+        return payload["clarification_required"].get<bool>();
+    }
+    if (payload.contains("clarification") && payload["clarification"].is_object()) {
+        return payload["clarification"].value("clarification_required", false);
+    }
+    return false;
+}
+
+json clarification_block(const json& payload) {
+    if (payload.contains("clarification") && payload["clarification"].is_object()) {
+        return payload["clarification"];
+    }
+    return payload;
 }
 
 void append_stage_failures(std::vector<std::string>& failures,
@@ -818,6 +1225,230 @@ std::vector<std::string> collect_validation_failures(const json& payload) {
     return failures;
 }
 
+std::optional<json> load_json_file(const fs::path& path) {
+    try {
+        std::ifstream stream(path, std::ios::binary);
+        if (!stream.is_open()) {
+            return std::nullopt;
+        }
+        return json::parse(stream);
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+std::string trim_copy(std::string value) {
+    value.erase(value.begin(),
+                std::find_if(value.begin(), value.end(), [](char ch) {
+                    return !std::isspace(static_cast<unsigned char>(ch));
+                }));
+    value.erase(std::find_if(value.rbegin(), value.rend(), [](char ch) {
+                    return !std::isspace(static_cast<unsigned char>(ch));
+                }).base(),
+                value.end());
+    return value;
+}
+
+std::string join_strings(const std::vector<std::string>& values,
+                         const std::string& separator) {
+    std::ostringstream stream;
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index > 0) {
+            stream << separator;
+        }
+        stream << values[index];
+    }
+    return stream.str();
+}
+
+std::optional<std::string> failed_stage_check_detail(const json& payload,
+                                                     const std::string& check_name) {
+    if (!payload.contains("stage") || !payload["stage"].is_object()) {
+        return std::nullopt;
+    }
+    const auto& stage = payload["stage"];
+    if (!stage.contains("rubric_checks") || !stage["rubric_checks"].is_array()) {
+        return std::nullopt;
+    }
+    for (const auto& check : stage["rubric_checks"]) {
+        if (!check.is_object() || check.value("passed", true)) {
+            continue;
+        }
+        if (check.value("name", std::string{}) != check_name) {
+            continue;
+        }
+        return check.value("detail", std::string{});
+    }
+    return std::nullopt;
+}
+
+std::vector<std::string> comma_separated_items(const std::string& text) {
+    std::vector<std::string> items;
+    std::stringstream stream(text);
+    std::string item;
+    while (std::getline(stream, item, ',')) {
+        item = trim_copy(std::move(item));
+        if (!item.empty()) {
+            items.push_back(std::move(item));
+        }
+    }
+    return items;
+}
+
+std::vector<std::string> missing_review_finding_ids(const json& payload) {
+    const auto detail = failed_stage_check_detail(payload, "Required findings covered");
+    if (!detail.has_value()) {
+        return {};
+    }
+    constexpr const char* kPrefix = "Missing findings:";
+    if (detail->rfind(kPrefix, 0) != 0) {
+        return {};
+    }
+    return comma_separated_items(detail->substr(std::strlen(kPrefix)));
+}
+
+std::string format_required_groups(const json& required_groups) {
+    if (!required_groups.is_array()) {
+        return {};
+    }
+
+    std::vector<std::string> group_summaries;
+    for (const auto& group : required_groups) {
+        if (!group.is_array()) {
+            continue;
+        }
+        std::vector<std::string> terms;
+        for (const auto& value : group) {
+            if (!value.is_string()) {
+                continue;
+            }
+            const std::string term = trim_copy(value.get<std::string>());
+            if (!term.empty()) {
+                terms.push_back(term);
+            }
+        }
+        if (!terms.empty()) {
+            group_summaries.push_back(join_strings(terms, " | "));
+        }
+    }
+    return join_strings(group_summaries, "; ");
+}
+
+void append_review_case_requirements(std::string& content,
+                                     const json& payload,
+                                     const fs::path& case_path) {
+    const auto case_data = load_json_file(case_path);
+    if (!case_data.has_value() || !case_data->is_object()) {
+        return;
+    }
+
+    std::ostringstream stream;
+    bool wrote_anything = false;
+
+    const auto baseline_detail = failed_stage_check_detail(payload, "Baseline reflected");
+    if (case_data->contains("baseline") && (*case_data)["baseline"].is_object()) {
+        const auto& baseline = (*case_data)["baseline"];
+        if (baseline.contains("required_terms") && baseline["required_terms"].is_array()) {
+            std::vector<std::string> terms;
+            for (const auto& value : baseline["required_terms"]) {
+                if (!value.is_string()) {
+                    continue;
+                }
+                const std::string term = trim_copy(value.get<std::string>());
+                if (!term.empty()) {
+                    terms.push_back(term);
+                }
+            }
+            if (!terms.empty()) {
+                stream << "tracked_case_requirements:\n";
+                stream << "- Baseline terms required";
+                if (baseline_detail.has_value() && !baseline_detail->empty()) {
+                    stream << " (validator failed: " << *baseline_detail << ")";
+                }
+                stream << ": " << join_strings(terms, ", ") << "\n";
+                wrote_anything = true;
+            }
+        }
+    }
+
+    const int min_required_clusters = case_data->value("min_required_clusters", 0);
+    if (min_required_clusters > 0) {
+        if (!wrote_anything) {
+            stream << "tracked_case_requirements:\n";
+        }
+        stream << "- Minimum distinct clusters required: " << min_required_clusters << "\n";
+        wrote_anything = true;
+    }
+
+    if (case_data->contains("required_findings") && (*case_data)["required_findings"].is_array()) {
+        const std::vector<std::string> missing_ids = missing_review_finding_ids(payload);
+        const bool cluster_check_failed = failed_stage_check_detail(payload, "Distinct clusters preserved").has_value();
+        const std::unordered_set<std::string> missing_set(missing_ids.begin(), missing_ids.end());
+        bool wrote_findings = false;
+        for (const auto& finding : (*case_data)["required_findings"]) {
+            if (!finding.is_object()) {
+                continue;
+            }
+            const std::string finding_id = finding.value("id", std::string{});
+            if (!cluster_check_failed
+                && !missing_set.empty()
+                && missing_set.find(finding_id) == missing_set.end()) {
+                continue;
+            }
+
+            if (!wrote_anything) {
+                stream << "tracked_case_requirements:\n";
+                wrote_anything = true;
+            }
+            if (!wrote_findings) {
+                stream << "- Required findings to cover:\n";
+                wrote_findings = true;
+            }
+
+            stream << "  - " << finding_id;
+            const std::string severity = finding.value("severity", std::string{});
+            const std::string cluster = finding.value("cluster", std::string{});
+            if (!severity.empty() || !cluster.empty()) {
+                stream << " [";
+                if (!severity.empty()) {
+                    stream << severity;
+                }
+                if (!severity.empty() && !cluster.empty()) {
+                    stream << "/";
+                }
+                if (!cluster.empty()) {
+                    stream << cluster;
+                }
+                stream << "]";
+            }
+            if (finding.contains("required_groups")) {
+                const std::string anchors = format_required_groups(finding["required_groups"]);
+                if (!anchors.empty()) {
+                    stream << ": " << anchors;
+                }
+            }
+            stream << "\n";
+        }
+    }
+
+    if (!wrote_anything) {
+        return;
+    }
+
+    const std::string guidance = stream.str();
+    const std::string marker = "raw_json:\n";
+    const std::size_t marker_pos = content.find(marker);
+    if (marker_pos == std::string::npos) {
+        if (!content.empty() && content.back() != '\n') {
+            content.push_back('\n');
+        }
+        content += guidance;
+        return;
+    }
+
+    content.insert(marker_pos, guidance);
+}
+
 std::string dump_payload(json payload) {
     return payload.dump(2);
 }
@@ -828,6 +1459,38 @@ ToolCallResult finalize_planner_result(const std::string& status_name,
                                        const json& payload) {
     if (overall_passed) {
         return {dump_payload(payload), false};
+    }
+
+    if (clarification_required(payload)) {
+        const json clar = clarification_block(payload);
+        std::ostringstream stream;
+        stream << status_name << " STATUS: CLARIFICATION_REQUIRED\n";
+        stream << primary_flag_name << ": false\n";
+        stream << "clarification_required: true\n";
+        if (clar.contains("clarification_mode") && clar["clarification_mode"].is_string()) {
+            stream << "clarification_mode: " << clar["clarification_mode"].get<std::string>() << "\n";
+        }
+        if (clar.contains("pending_clarification_ids") && clar["pending_clarification_ids"].is_array()) {
+            stream << "pending_clarifications: " << clar["pending_clarification_ids"].size() << "\n";
+        }
+        const std::string message = clar.value("clarification_message", std::string{});
+        if (!message.empty()) {
+            stream << "clarification_message: " << message << "\n";
+        }
+
+        stream << "questions:\n";
+        if (clar.contains("clarifications") && clar["clarifications"].is_array()) {
+            for (const auto& item : clar["clarifications"]) {
+                if (!item.is_object()) {
+                    continue;
+                }
+                const std::string qid = item.value("id", std::string{"unknown"});
+                const std::string question = item.value("question", std::string{});
+                stream << "- " << qid << ": " << question << "\n";
+            }
+        }
+        stream << "raw_json:\n" << dump_payload(payload);
+        return {stream.str(), true};
     }
 
     std::vector<std::string> failures = collect_validation_failures(payload);
@@ -859,6 +1522,71 @@ ToolCallResult finalize_planner_result(const std::string& status_name,
     }
     stream << "raw_json:\n" << dump_payload(payload);
     return {stream.str(), true};
+}
+
+ToolCallResult run_case_validation_tool(ValidationCaseKind kind,
+                                        const json& args,
+                                        const ToolContext& context,
+                                        int default_timeout_ms) {
+    std::string error;
+    const auto case_path = resolve_tracked_case_path(kind, args, context, error);
+    if (!case_path) {
+        return {error, true};
+    }
+
+    ScopedTempPath temp_report;
+    bool used_inline_report = false;
+    const auto report_path = resolve_validation_report_path(
+        kind,
+        args,
+        context,
+        temp_report,
+        used_inline_report,
+        error);
+    if (!report_path) {
+        return {error, true};
+    }
+
+    const auto config_path = optional_workspace_or_external_path(args, "config_path", context, error);
+    if (!error.empty()) {
+        return {error, true};
+    }
+
+    const int timeout_ms = resolve_timeout(args, default_timeout_ms);
+    std::vector<std::string> bridge_args = {
+        validation_bridge_command(kind),
+        case_path->string(),
+        report_path->string(),
+    };
+    if (args.value("skip_adversary", true)) {
+        bridge_args.push_back("--skip-adversary");
+    }
+    if (args.contains("model") && args.at("model").is_string()) {
+        bridge_args.push_back("--model");
+        bridge_args.push_back(args.at("model").get<std::string>());
+    }
+
+    json payload;
+    const auto result = invoke_bridge(context, config_path, bridge_args, timeout_ms, payload);
+    if (result.is_error) {
+        return result;
+    }
+
+    if (used_inline_report) {
+        payload["report_source"] = "inline_text";
+        payload["report_path"] = "[inline report text]";
+    }
+
+    const bool overall_passed = object_flag(payload, "stage");
+    ToolCallResult final_result = finalize_planner_result(
+        validation_status_name(kind),
+        validation_primary_flag(kind),
+        overall_passed,
+        payload);
+    if (final_result.is_error && kind == ValidationCaseKind::Review) {
+        append_review_case_requirements(final_result.content, payload, *case_path);
+    }
+    return final_result;
 }
 
 }  // namespace
@@ -1009,6 +1737,72 @@ ToolCallResult PlannerValidatePlanTool::call(const json&) {
     return missing_context(name().c_str());
 }
 
+std::string PlannerValidateReviewTool::name() const {
+    return "planner_validate_review";
+}
+
+std::string PlannerValidateReviewTool::description() const {
+    return "Validate an audit or review report against a tracked planner-harness review case.";
+}
+
+nlohmann::json PlannerValidateReviewTool::input_schema() const {
+    return {
+        {"type", "object"},
+        {"properties", {
+            {"case_id", {{"type", "string"}, {"description", "Tracked review case id or filename. When omitted, the tool tries to match the current workspace name to a tracked review case."}}},
+            {"case_path", {{"type", "string"}, {"description", "Optional absolute path, workspace-relative path, or tracked-case-relative path to the review case JSON."}}},
+            {"report_path", {{"type", "string"}, {"description", "Path to the review report text file. Can be workspace-relative or absolute."}}},
+            {"report_text", {{"type", "string"}, {"description", "Inline review report text to validate without writing a workspace file."}}},
+            {"config_path", {{"type", "string"}, {"description", "Optional planner-harness config path. Can be workspace-relative or absolute."}}},
+            {"model", {{"type", "string"}, {"description", "Optional planner-harness model name override."}}},
+            {"skip_adversary", {{"type", "boolean"}, {"description", "Skip the LLM adversary pass and run rubric checks only."}, {"default", true}}},
+            {"timeout", {{"type", "integer"}, {"description", "Maximum execution time in milliseconds."}, {"default", kDefaultTimeoutMs}}}
+        }}
+    };
+}
+
+ToolCallResult PlannerValidateReviewTool::call(const json& args,
+                                               const ToolContext& context) {
+    return run_case_validation_tool(ValidationCaseKind::Review, args, context, kDefaultTimeoutMs);
+}
+
+ToolCallResult PlannerValidateReviewTool::call(const json&) {
+    return missing_context(name().c_str());
+}
+
+std::string PlannerValidateBugfixTool::name() const {
+    return "planner_validate_bugfix";
+}
+
+std::string PlannerValidateBugfixTool::description() const {
+    return "Validate a bugfix writeup against a tracked planner-harness bugfix case.";
+}
+
+nlohmann::json PlannerValidateBugfixTool::input_schema() const {
+    return {
+        {"type", "object"},
+        {"properties", {
+            {"case_id", {{"type", "string"}, {"description", "Tracked bugfix case id or filename."}}},
+            {"case_path", {{"type", "string"}, {"description", "Optional absolute path, workspace-relative path, or tracked-case-relative path to the bugfix case JSON."}}},
+            {"report_path", {{"type", "string"}, {"description", "Path to the bugfix report text file. Can be workspace-relative or absolute."}}},
+            {"report_text", {{"type", "string"}, {"description", "Inline bugfix writeup text to validate without writing a workspace file."}}},
+            {"config_path", {{"type", "string"}, {"description", "Optional planner-harness config path. Can be workspace-relative or absolute."}}},
+            {"model", {{"type", "string"}, {"description", "Optional planner-harness model name override."}}},
+            {"skip_adversary", {{"type", "boolean"}, {"description", "Skip the LLM adversary pass and run rubric checks only."}, {"default", true}}},
+            {"timeout", {{"type", "integer"}, {"description", "Maximum execution time in milliseconds."}, {"default", kDefaultTimeoutMs}}}
+        }}
+    };
+}
+
+ToolCallResult PlannerValidateBugfixTool::call(const json& args,
+                                               const ToolContext& context) {
+    return run_case_validation_tool(ValidationCaseKind::Bugfix, args, context, kDefaultTimeoutMs);
+}
+
+ToolCallResult PlannerValidateBugfixTool::call(const json&) {
+    return missing_context(name().c_str());
+}
+
 std::string PlannerRepairPlanTool::name() const {
     return "planner_repair_plan";
 }
@@ -1150,7 +1944,11 @@ nlohmann::json PlannerBuildPlanTool::input_schema() const {
             {"plan_output_path", {{"type", "string"}, {"description", "Where to write the generated plan."}, {"default", "PLAN.json"}}},
             {"config_path", {{"type", "string"}, {"description", "Optional planner-harness config path inside the workspace."}}},
             {"model", {{"type", "string"}, {"description", "Optional planner-harness model name override."}}},
-            {"skip_adversary", {{"type", "boolean"}, {"description", "Skip LLM adversary checks during validation."}, {"default", true}}},
+            {"skip_adversary", {{"type", "boolean"}, {"description", "Skip LLM adversary checks during validation."}, {"default", false}}},
+            {"clarification_mode", {{"type", "string"}, {"description", "Clarification policy: required, assume, or off."}, {"default", "required"}}},
+            {"clarification_answers", {{"description", "Optional structured answers map (or array of {id, value}) for pending clarifications."}}},
+            {"clarification_answers_text", {{"type", "string"}, {"description", "Optional conversational answer text for one or many pending clarifications."}}},
+            {"delegate_unanswered", {{"type", "boolean"}, {"description", "Apply recommended defaults for unresolved clarification questions."}, {"default", false}}},
             {"timeout", {{"type", "integer"}, {"description", "Maximum execution time in milliseconds."}, {"default", kDefaultTimeoutMs}}}
         }},
         {"required", json::array({"spec_path"})}
@@ -1198,8 +1996,21 @@ ToolCallResult PlannerBuildPlanTool::call(const json& args,
         "--plan-output",
         plan_output->string(),
     };
-    if (args.value("skip_adversary", true)) {
+    if (args.value("skip_adversary", false)) {
         bridge_args.push_back("--skip-adversary");
+    }
+    bridge_args.push_back("--clarification-mode");
+    bridge_args.push_back(args.value("clarification_mode", std::string{"required"}));
+    if (args.contains("clarification_answers") && !args.at("clarification_answers").is_null()) {
+        bridge_args.push_back("--answers-json-text");
+        bridge_args.push_back(args.at("clarification_answers").dump());
+    }
+    if (args.contains("clarification_answers_text") && args.at("clarification_answers_text").is_string()) {
+        bridge_args.push_back("--answers-text");
+        bridge_args.push_back(args.at("clarification_answers_text").get<std::string>());
+    }
+    if (args.value("delegate_unanswered", false)) {
+        bridge_args.push_back("--delegate-unanswered");
     }
     if (args.contains("model") && args.at("model").is_string()) {
         bridge_args.push_back("--model");
@@ -1250,7 +2061,11 @@ nlohmann::json PlannerBuildFromIdeaTool::input_schema() const {
             {"overwrite", {{"type", "boolean"}, {"description", "Allow overwriting existing output artifacts."}, {"default", false}}},
             {"config_path", {{"type", "string"}, {"description", "Optional planner-harness config path inside the workspace."}}},
             {"model", {{"type", "string"}, {"description", "Optional planner-harness model name override."}}},
-            {"skip_adversary", {{"type", "boolean"}, {"description", "Skip LLM adversary checks during spec and plan validation."}, {"default", true}}},
+            {"skip_adversary", {{"type", "boolean"}, {"description", "Skip LLM adversary checks during spec and plan validation."}, {"default", false}}},
+            {"clarification_mode", {{"type", "string"}, {"description", "Clarification policy: required, assume, or off."}, {"default", "required"}}},
+            {"clarification_answers", {{"description", "Optional structured answers map (or array of {id, value}) for pending clarifications."}}},
+            {"clarification_answers_text", {{"type", "string"}, {"description", "Optional conversational answer text for one or many pending clarifications."}}},
+            {"delegate_unanswered", {{"type", "boolean"}, {"description", "Apply recommended defaults for unresolved clarification questions."}, {"default", false}}},
             {"timeout", {{"type", "integer"}, {"description", "Maximum execution time in milliseconds."}, {"default", kDefaultTimeoutMs}}}
         }}
     };
@@ -1363,8 +2178,21 @@ ToolCallResult PlannerBuildFromIdeaTool::call(const json& args,
     if (args.value("overwrite", false)) {
         bridge_args.push_back("--overwrite");
     }
-    if (args.value("skip_adversary", true)) {
+    if (args.value("skip_adversary", false)) {
         bridge_args.push_back("--skip-adversary");
+    }
+    bridge_args.push_back("--clarification-mode");
+    bridge_args.push_back(args.value("clarification_mode", std::string{"required"}));
+    if (args.contains("clarification_answers") && !args.at("clarification_answers").is_null()) {
+        bridge_args.push_back("--answers-json-text");
+        bridge_args.push_back(args.at("clarification_answers").dump());
+    }
+    if (args.contains("clarification_answers_text") && args.at("clarification_answers_text").is_string()) {
+        bridge_args.push_back("--answers-text");
+        bridge_args.push_back(args.at("clarification_answers_text").get<std::string>());
+    }
+    if (args.value("delegate_unanswered", false)) {
+        bridge_args.push_back("--delegate-unanswered");
     }
     if (args.contains("model") && args.at("model").is_string()) {
         bridge_args.push_back("--model");

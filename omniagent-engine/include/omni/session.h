@@ -44,6 +44,7 @@ public:
     void set_tool_context(ToolContext context);
     void set_system_prompt(std::string system_prompt);
     void set_permission_mode(PermissionMode mode);
+    void set_evidence_based_final_answer(bool enabled);
     void set_max_parallel_tools(int max_parallel_tools);
     std::vector<std::string> tool_names() const;
     Tool* find_tool(const std::string& name) const;

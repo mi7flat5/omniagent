@@ -18,7 +18,15 @@ struct Config {
     std::string system_prompt;
     int max_turns        = 50;
     int preserve_tail    = 4;
-    int max_result_chars = 500;
+    int max_result_chars = 50000;
+    int compact_max_result_chars = 500;
+    std::optional<double> temperature;
+    std::optional<double> top_p;
+    std::optional<int> top_k;
+    std::optional<double> min_p;
+    std::optional<double> presence_penalty;
+    std::optional<double> frequency_penalty;
+    int initial_max_tokens = 8192;
 
     // Auto-compact settings
     float compact_soft_limit_pct = 0.75f;

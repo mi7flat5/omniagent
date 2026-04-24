@@ -91,6 +91,7 @@ endif()
 if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     add_executable(omni-engine-tests
+        src/cli/repl.cpp
         tests/test_types.cpp
         tests/test_workspace_tools.cpp
         tests/test_stream_assembler.cpp

@@ -5,6 +5,7 @@
 #include <omni/tool.h>
 #include <omni/types.h>
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -22,6 +23,10 @@ class PermissionDelegate;
 enum class AgentType {
     GeneralPurpose,  // Full tool access
     Explore,         // Read-only tools only
+    Feature,         // Direct implementation or spec/plan escalation
+    Refactor,        // Behavior-preserving structural changes
+    Audit,           // Findings-first read-only review
+    Bugfix,          // Root-cause-first remediation
     Research,        // Read-only local + web research
     Spec,            // Spec writing + validation workflow
     Plan,            // Plan generation + validation workflow
@@ -75,6 +80,12 @@ public:
     /// Returns false if agent not found.
     bool wait_for(const std::string& agent_id) const;
 
+    /// Request stop on all currently running child agents.
+    void stop_all_running();
+
+    /// Request cancellation on all currently running child agents.
+    void cancel_all_running();
+
     /// Copy the parent session's workspace/tool context into future child agents.
     void set_parent_tool_context(ToolContext context);
 
@@ -94,6 +105,7 @@ private:
     };
 
     mutable std::mutex                              mutex_;
+    mutable std::condition_variable                 state_cv_;
     std::unordered_map<std::string, AgentState>     agents_;
     int                                             next_id_ = 0;
 

@@ -1,4 +1,4 @@
-# Feature: Graph-First Core And Standalone Engine Separation
+# Feature: Graph-First Core And Standalone Engine Separation (Historical)
 
 ## Summary
 
@@ -6,6 +6,18 @@ The main OmniAgent product should be graph-first for now. The legacy engine path
 originally intended to replace chat-centric behavior, should be isolated into its
 own standalone module with an independent build, test suite, and test harness so
 core feature work can proceed without integration drag.
+
+## Status Update (2026-04-08)
+
+This document is retained as historical context for the extraction work.
+
+Current direction:
+
+- Keep `omniagent-engine` as an independently buildable/testable top-level module.
+- Integrate engine host/session APIs back into `omniagent-core` for project-scoped
+  agent loops that run outside graph execution.
+- Use the integrated loop first for spec->plan and developer debug/remediation
+  workflows, while keeping graph execution as a separate runtime path.
 
 ## Prior Art Research
 

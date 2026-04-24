@@ -53,6 +53,30 @@ NullEventObserver& null_event_observer() {
     return observer;
 }
 
+bool is_local_read_only_tool(const Tool* tool) {
+    return tool && tool->is_read_only() && !tool->is_network() && !tool->is_mcp();
+}
+
+bool is_non_mcp_read_only_tool(const Tool* tool) {
+    return tool && tool->is_read_only() && !tool->is_mcp();
+}
+
+bool is_planner_tool_name(const std::string& name) {
+    return name == "planner_validate_spec"
+        || name == "planner_validate_plan"
+        || name == "planner_repair_plan"
+        || name == "planner_build_plan"
+        || name == "planner_build_from_idea";
+}
+
+bool is_review_validation_tool_name(const std::string& name) {
+    return name == "planner_validate_review";
+}
+
+bool is_bugfix_validation_tool_name(const std::string& name) {
+    return name == "planner_validate_bugfix";
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -89,45 +113,59 @@ std::vector<std::string> AgentManager::filter_tools_for_type(AgentType type) con
     std::vector<std::string> filtered;
     for (const auto& n : all_names) {
         const Tool* t = engine_.find_tool(n);
-        if (type == AgentType::Explore) {
-            // Explore: read-only local inspection only.
-            if (t && t->is_read_only() && !t->is_network() && !t->is_mcp()) {
-                filtered.push_back(n);
-            }
-        } else if (type == AgentType::Research) {
-            // Research: read-only local + web tools.
-            if (t && t->is_read_only() && !t->is_mcp()) {
-                filtered.push_back(n);
-            }
-        } else if (type == AgentType::Spec) {
-            if (!t || t->is_mcp()) {
-                continue;
-            }
-            const bool allowed =
-                (t->is_read_only() && !t->is_mcp())
-                || n == "write_file"
-                || n == "edit_file"
-                || n == "bash"
-                || n == "planner_validate_spec";
-            if (allowed) {
-                filtered.push_back(n);
-            }
-        } else if (type == AgentType::Plan) {
-            // Plan: read-only local tools + write_file + bash.
-            if (!t || t->is_mcp()) {
-                continue;
-            }
-            const bool allowed =
-                (t->is_read_only() && !t->is_network() && !t->is_mcp())
-                || n == "write_file"
-                || n == "bash"
-                || n == "planner_validate_plan"
-                || n == "planner_repair_plan"
-                || n == "planner_build_plan"
-                || n == "planner_build_from_idea";
-            if (allowed) {
-                filtered.push_back(n);
-            }
+        if (!t) {
+            continue;
+        }
+
+        bool allowed = false;
+        switch (type) {
+            case AgentType::Explore:
+                allowed = is_local_read_only_tool(t);
+                break;
+            case AgentType::Feature:
+            case AgentType::Refactor:
+                allowed = is_local_read_only_tool(t)
+                    || n == "write_file"
+                    || n == "edit_file"
+                    || n == "bash"
+                    || is_planner_tool_name(n);
+                break;
+            case AgentType::Audit:
+                allowed = is_local_read_only_tool(t)
+                    || is_review_validation_tool_name(n);
+                break;
+            case AgentType::Bugfix:
+                allowed = is_local_read_only_tool(t)
+                    || n == "write_file"
+                    || n == "edit_file"
+                    || n == "bash"
+                    || is_bugfix_validation_tool_name(n);
+                break;
+            case AgentType::Research:
+                allowed = is_non_mcp_read_only_tool(t);
+                break;
+            case AgentType::Spec:
+                allowed = is_non_mcp_read_only_tool(t)
+                    || n == "write_file"
+                    || n == "edit_file"
+                    || n == "bash"
+                    || n == "planner_validate_spec";
+                break;
+            case AgentType::Plan:
+                allowed = is_local_read_only_tool(t)
+                    || n == "write_file"
+                    || n == "bash"
+                    || n == "planner_validate_plan"
+                    || n == "planner_repair_plan"
+                    || n == "planner_build_plan"
+                    || n == "planner_build_from_idea";
+                break;
+            case AgentType::GeneralPurpose:
+                break;
+        }
+
+        if (allowed) {
+            filtered.push_back(n);
         }
     }
     return filtered;
@@ -137,6 +175,14 @@ std::string AgentManager::profile_name_for_type(AgentType type) const {
     switch (type) {
         case AgentType::Explore:
             return "explore";
+        case AgentType::Feature:
+            return "feature";
+        case AgentType::Refactor:
+            return "refactor";
+        case AgentType::Audit:
+            return "audit";
+        case AgentType::Bugfix:
+            return "bugfix";
         case AgentType::Research:
             return "research";
         case AgentType::Spec:
@@ -155,6 +201,12 @@ PermissionMode AgentManager::permission_mode_for_type(AgentType type) const {
             return PermissionMode::Default;
         case AgentType::Explore:
         case AgentType::Research:
+        case AgentType::Audit:
+            return PermissionMode::Plan;
+        case AgentType::Feature:
+        case AgentType::Refactor:
+        case AgentType::Bugfix:
+            return PermissionMode::AcceptEdits;
         case AgentType::Spec:
         case AgentType::Plan:
             return PermissionMode::Bypass;
@@ -179,13 +231,47 @@ std::string AgentManager::system_prompt_for_type(AgentType type) const {
 
     switch (type) {
         case AgentType::Explore:
-            prompt << "Role: local codebase explorer.\n"
-                   << "Inspect files, search the workspace, and summarize only the findings needed for the task.\n"
+             prompt << "Role: existing-codebase exploration worker.\n"
+                 << "Inspect files, trace execution flow, identify ownership boundaries, and summarize only the findings needed for the task.\n"
+                                 << "Use the minimum read-only inspection needed to answer, avoid rereading the same files or rerunning the same searches unless confirming a concrete point, and stop once you have enough evidence.\n"
                    << "Do not modify files and do not attempt web research.\n";
             break;
+         case AgentType::Feature:
+             prompt << "Role: feature implementation worker.\n"
+                 << "Inspect existing code paths, abstractions, and test style before editing.\n"
+                 << "Use a direct implementation path when the request is contained, and escalate to spec/plan plus graph setup when scope or ambiguity warrants it.\n"
+                 << "Run targeted verification before finishing, or state exactly why it could not be run.\n";
+             break;
+         case AgentType::Refactor:
+             prompt << "Role: refactor worker.\n"
+                 << "Treat the task as behavior-preserving unless the user explicitly asks for semantic change.\n"
+                 << "Name the invariants, compatibility assumptions, or regression checks that must hold, prefer reviewable edits, and run targeted regression validation before finishing.\n"
+                 << "If the work actually adds new behavior or needs broader planning, say so instead of silently changing semantics.\n";
+             break;
+         case AgentType::Audit:
+             prompt << "Role: audit worker.\n"
+                 << "Review the requested code or changes without modifying the workspace.\n"
+                 << "Run the audit systematically: map the relevant repository surface first, identify entrypoints and ownership boundaries, inspect at least one validation or contract surface when present, then pair each finding with both the implementation evidence and the violated contract or observed behavior.\n"
+                 << "Report findings first, ordered by severity, with concrete evidence and affected files.\n"
+                 << "Keep only findings that are directly supported by gathered evidence; if the exact code, symbol, or tool output is missing or contradictory, drop the finding.\n"
+                 << "Do not label something a test bug or mock issue unless the evidence explicitly shows the test expectation or patch target is wrong; otherwise describe the code/test contract mismatch neutrally.\n"
+                 << "Do not pad the answer with generic sections such as broad summaries, missing features, documentation advice, security considerations, or production-readiness claims unless the user explicitly asked for them or the evidence directly supports them.\n"
+                 << "Only state counts or percentages when they come from explicit tool output, and if tests or command output show multiple distinct failure clusters, reflect those actual clusters instead of collapsing them into a single guessed root cause.\n"
+                 << "When planner_validate_review is available and a tracked review case exists, validate your draft report text before you finish, and if validation says required coverage is missing, gather the missing evidence with targeted reads or searches before you finalize.\n"
+                 << "Avoid repeated rereads once the evidence is already sufficient, prefer targeted inspection over broad sweeps, and stop exploring as soon as you can support a conclusion.\n"
+                 << "State explicitly when no findings are present. Do not modify files or claim fixes were applied.\n";
+             break;
+         case AgentType::Bugfix:
+             prompt << "Role: bugfix worker.\n"
+                 << "Capture the failing behavior or repro first, isolate the root cause, and make the smallest defensible fix.\n"
+                 << "Prefer direct repository work for contained issues. If the problem expands into broader planning or feature work, say so explicitly rather than widening scope silently.\n"
+                 << "When planner_validate_bugfix is available and you have a tracked case id or case path, validate the final writeup before you finish.\n"
+                 << "Run the repro or targeted validation after the fix, or state exactly why it could not be run.\n";
+             break;
         case AgentType::Research:
             prompt << "Role: research worker.\n"
                    << "Use read-only local tools plus web_search/web_fetch to gather evidence and summarize it clearly.\n"
+                 << "Prefer focused source collection over open-ended browsing, avoid repeating the same searches unless confirming a concrete point, and stop once you have enough evidence to answer.\n"
                    << "Do not modify files. If web_search reports that BRAVE_SEARCH_KEY is missing, say that briefly and continue with any specific URLs via web_fetch when useful.\n";
             break;
         case AgentType::Spec:
@@ -202,6 +288,8 @@ std::string AgentManager::system_prompt_for_type(AgentType type) const {
                << "Use planner_build_from_idea when the user provides an idea and needs SPEC.md plus PLAN.json in one run.\n"
                << "Use planner_build_plan when SPEC.md already exists, planner_repair_plan to patch an existing PLAN.json after failures, and planner_validate_plan for the final check on any candidate plan.\n"
                << "If a planner tool result starts with 'PLANNER_* STATUS: FAILED', treat that as a failed validation even if the raw JSON contains command-level ok fields.\n"
+                << "If a planner tool result starts with 'PLANNER_* STATUS: CLARIFICATION_REQUIRED', ask the user the listed questions conversationally, accept one-by-one or batched answers, and then rerun the same planner tool with clarification answers included.\n"
+                << "If the user says 'you decide for me', pass delegate_unanswered=true so recommended defaults are applied for unresolved clarification questions.\n"
                << "If you edit or repair PLAN.json in any way, run planner_validate_plan again before you finish.\n"
                << "Do not report success unless the latest planner_validate_plan result passes; otherwise report the remaining blocking checks explicitly.\n"
                << "For Python package __init__.py files, include matching tests named tests/test_<parent>_init.py instead of treating package markers as exempt.\n"
@@ -238,6 +326,7 @@ std::string AgentManager::spawn(const AgentConfig& config,
     }
     session->set_system_prompt(system_prompt_for_type(config.type));
     session->set_permission_mode(permission_mode_for_type(config.type));
+    session->set_evidence_based_final_answer(config.type == AgentType::Audit);
 
     // Apply tool filter for typed agents.
     const std::vector<std::string> allowed = filter_tools_for_type(config.type);
@@ -297,6 +386,7 @@ std::string AgentManager::spawn(const AgentConfig& config,
                     it->second.running = false;
                 }
             }
+            state_cv_.notify_all();
 
             if (on_complete) {
                 on_complete(result);
@@ -328,6 +418,7 @@ std::string AgentManager::spawn(const AgentConfig& config,
             it->second.running = false;
         }
     }
+    state_cv_.notify_all();
 
     if (on_complete) {
         on_complete(result);
@@ -391,7 +482,45 @@ bool AgentManager::wait_for(const std::string& agent_id) const {
     }
     if (!session_ptr) return false;
     session_ptr->wait();
+
+    std::unique_lock<std::mutex> lock(mutex_);
+    state_cv_.wait(lock, [&]() {
+        const auto it = agents_.find(agent_id);
+        return it == agents_.end() || !it->second.running;
+    });
     return true;
+}
+
+void AgentManager::stop_all_running() {
+    std::vector<std::shared_ptr<Session>> sessions;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [_, state] : agents_) {
+            if (state.running && state.session) {
+                sessions.push_back(state.session);
+            }
+        }
+    }
+
+    for (const auto& session : sessions) {
+        session->stop();
+    }
+}
+
+void AgentManager::cancel_all_running() {
+    std::vector<std::shared_ptr<Session>> sessions;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [_, state] : agents_) {
+            if (state.running && state.session) {
+                sessions.push_back(state.session);
+            }
+        }
+    }
+
+    for (const auto& session : sessions) {
+        session->cancel();
+    }
 }
 
 }  // namespace omni::engine

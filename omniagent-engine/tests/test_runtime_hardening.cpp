@@ -193,6 +193,9 @@ private:
 
 class RHBigResultTool : public Tool {
 public:
+    explicit RHBigResultTool(std::size_t size = 256)
+        : size_(size) {}
+
     std::string name() const override { return "rh_big_result"; }
     std::string description() const override { return "Return a large tool payload"; }
     nlohmann::json input_schema() const override { return {}; }
@@ -200,8 +203,11 @@ public:
     bool is_destructive() const override { return false; }
 
     ToolCallResult call(const nlohmann::json&) override {
-        return {std::string(256, 'x'), false};
+        return {std::string(size_, 'x'), false};
     }
+
+private:
+    std::size_t size_;
 };
 
 }  // namespace
@@ -272,6 +278,27 @@ TEST(RuntimeHardening, EngineConfigControlsToolResultTruncation) {
     const auto& tool_result = session->messages()[2].tool_results[0].content;
     EXPECT_NE(tool_result.find("[truncated"), std::string::npos);
     EXPECT_LT(tool_result.size(), 128u);
+}
+
+TEST(RuntimeHardening, DefaultEngineConfigPreservesReadSizedToolResults) {
+    Config config;
+    config.max_turns = 4;
+
+    Engine engine(config, std::make_unique<RHTwoTurnProvider>());
+    engine.register_tool(std::make_unique<RHBigResultTool>(4096));
+
+    RHAllowAllDelegate delegate;
+    RHCollectingObserver observer;
+    auto session = engine.create_session(observer, delegate);
+
+    session->submit("go");
+    session->wait();
+
+    ASSERT_EQ(session->messages().size(), 4u);
+    ASSERT_EQ(session->messages()[2].tool_results.size(), 1u);
+    const auto& tool_result = session->messages()[2].tool_results[0].content;
+    EXPECT_EQ(tool_result.size(), 4096u);
+    EXPECT_EQ(tool_result.find("[truncated"), std::string::npos);
 }
 
 TEST(RuntimeHardening, HttpProviderThrowsOnTransportFailure) {

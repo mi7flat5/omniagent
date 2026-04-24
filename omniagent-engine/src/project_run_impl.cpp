@@ -58,22 +58,9 @@ void ProjectRun::stop() {
 
 void ProjectRun::resume(const std::string& resume_input) {
     auto run_state = impl_->state;
-    const auto decision = parse_resume_decision(resume_input);
-
-    {
-        std::lock_guard<std::mutex> lock(run_state->mutex);
-        if (run_state->result.status != RunStatus::Paused
-            || !run_state->result.pending_approval.has_value()) {
-            throw std::runtime_error("run is not paused");
-        }
-        run_state->pending_resolution = decision;
-        run_state->result.status = RunStatus::Running;
-        run_state->result.pause_reason.reset();
-        run_state->result.pending_approval.reset();
+    if (!resume_live_run(run_state, resume_input)) {
+        throw std::runtime_error("run is not paused");
     }
-
-    persist_run_state(run_state);
-    run_state->approval_cv.notify_all();
 }
 
 void ProjectRun::wait() {

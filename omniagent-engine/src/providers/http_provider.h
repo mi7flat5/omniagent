@@ -37,7 +37,8 @@ private:
                         bool& thinking_open,
                         bool& text_started,
                         std::unordered_set<int>& open_tool_blocks,
-                        Usage& usage) const;
+                        Usage& usage,
+                        bool& message_terminated) const;
 };
 
 }  // namespace omni::engine

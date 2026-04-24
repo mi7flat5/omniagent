@@ -91,6 +91,67 @@ PendingApproval pending_approval_from_json(const nlohmann::json& value) {
     return pending;
 }
 
+nlohmann::json clarification_question_to_json(const ClarificationQuestion& value) {
+    return {
+        {"id", value.id},
+        {"stage", value.stage},
+        {"severity", value.severity},
+        {"quote", value.quote},
+        {"question", value.question},
+        {"recommended_default", value.recommended_default},
+        {"answer_type", value.answer_type},
+        {"options", value.options},
+    };
+}
+
+ClarificationQuestion clarification_question_from_json(const nlohmann::json& value) {
+    ClarificationQuestion question;
+    question.id = value.value("id", std::string{});
+    question.stage = value.value("stage", std::string{});
+    question.severity = value.value("severity", std::string{});
+    question.quote = value.value("quote", std::string{});
+    question.question = value.value("question", std::string{});
+    question.recommended_default = value.value("recommended_default", std::string{});
+    question.answer_type = value.value("answer_type", std::string{});
+    question.options = value.value("options", nlohmann::json::array());
+    return question;
+}
+
+nlohmann::json pending_clarification_to_json(const PendingClarification& value) {
+    nlohmann::json questions = nlohmann::json::array();
+    for (const auto& question : value.questions) {
+        questions.push_back(clarification_question_to_json(question));
+    }
+    return {
+        {"tool_name", value.tool_name},
+        {"clarification_mode", value.clarification_mode},
+        {"clarification_message", value.clarification_message},
+        {"pending_question_ids", value.pending_question_ids},
+        {"questions", questions},
+        {"raw_payload", value.raw_payload},
+        {"requested_at_us", to_epoch_us(value.requested_at)},
+    };
+}
+
+PendingClarification pending_clarification_from_json(const nlohmann::json& value) {
+    PendingClarification pending;
+    pending.tool_name = value.value("tool_name", std::string{});
+    pending.clarification_mode = value.value("clarification_mode", std::string{});
+    pending.clarification_message = value.value("clarification_message", std::string{});
+    pending.pending_question_ids = value.value("pending_question_ids", std::vector<std::string>{});
+    if (value.contains("questions") && value["questions"].is_array()) {
+        for (const auto& item : value["questions"]) {
+            if (!item.is_object()) {
+                continue;
+            }
+            pending.questions.push_back(clarification_question_from_json(item));
+        }
+    }
+    pending.raw_payload = value.value("raw_payload", nlohmann::json::object());
+    pending.requested_at = from_epoch_us(value.value("requested_at_us", int64_t{0}));
+    return pending;
+}
+
 nlohmann::json run_result_to_json(const RunResult& result) {
     nlohmann::json value = {
         {"run_id", result.run_id},
@@ -113,6 +174,9 @@ nlohmann::json run_result_to_json(const RunResult& result) {
     }
     if (result.pending_approval.has_value()) {
         value["pending_approval"] = pending_approval_to_json(*result.pending_approval);
+    }
+    if (result.pending_clarification.has_value()) {
+        value["pending_clarification"] = pending_clarification_to_json(*result.pending_clarification);
     }
 
     return value;
@@ -138,6 +202,9 @@ RunResult run_result_from_json(const nlohmann::json& value) {
     }
     if (value.contains("pending_approval") && value["pending_approval"].is_object()) {
         result.pending_approval = pending_approval_from_json(value["pending_approval"]);
+    }
+    if (value.contains("pending_clarification") && value["pending_clarification"].is_object()) {
+        result.pending_clarification = pending_clarification_from_json(value["pending_clarification"]);
     }
     result.started_at = from_epoch_us(value.value("started_at_us", int64_t{0}));
     result.finished_at = from_epoch_us(value.value("finished_at_us", int64_t{0}));
@@ -260,7 +327,7 @@ bool RunPersistence::remove(const std::string& run_id) {
 }
 
 void RunPersistence::save_pending(const RunResult& result) {
-    if (!result.pending_approval.has_value()) {
+    if (!result.pending_approval.has_value() && !result.pending_clarification.has_value()) {
         return;
     }
 

@@ -1,0 +1,70 @@
+{
+  "id": "host-shutdown-run-finalization",
+  "kind": "bugfix",
+  "title": "Finalize active runs during host shutdown",
+  "repro_groups": [
+    [
+      "HostDestructorFinalizesActiveRun",
+      "host destruction",
+      "host shutdown"
+    ],
+    [
+      "RunStatus::Running",
+      "status stayed Running",
+      "persisted as running"
+    ],
+    [
+      "reloaded host",
+      "get_run",
+      "reload"
+    ]
+  ],
+  "root_cause_groups": [
+    [
+      "ProjectEngineHost::~ProjectEngineHost",
+      "shutdown()"
+    ],
+    [
+      "persist_run_state",
+      "expired host",
+      "weak_ptr"
+    ]
+  ],
+  "fix_groups": [
+    [
+      "ProjectEngineHost::~ProjectEngineHost",
+      "call shutdown() in the destructor",
+      "destructor now calls shutdown"
+    ],
+    [
+      "persist_run_state",
+      "host.lock()",
+      "finished_at"
+    ]
+  ],
+  "verification_groups": [
+    [
+      "HostDestructorFinalizesActiveRun",
+      "test_project_host"
+    ],
+    [
+      "status != RunStatus::Running",
+      "status not `RunStatus::Running`",
+      "status is not `RunStatus::Running`"
+    ],
+    [
+      "finished_at",
+      "reloaded host",
+      "get_run"
+    ]
+  ],
+  "forbidden_patterns": [
+    {
+      "id": "unsupported-global-success",
+      "patterns": [
+        "all tests pass",
+        "everything passes"
+      ]
+    }
+  ]
+}

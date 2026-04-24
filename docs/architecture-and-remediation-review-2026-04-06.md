@@ -23,9 +23,13 @@ The goals of this document are:
 Update applied later on 2026-04-06:
 
 - The legacy engine path was extracted from `omniagent-core/src/engine` into the standalone top-level module `omniagent-engine`.
-- `agentcore` no longer links against `omni-engine`.
+- `agentcore` now integrates `omni-engine` through project-scoped host/session APIs for spec->plan and developer workflows that run outside graph execution.
 - `omniagent-engine` now has its own root `CMakeLists.txt`, `vcpkg.json`, and `run_harness.sh`.
 - The web app was pruned further toward the graph-first surface by removing unmounted app-shell components and related dead stores.
+
+Update applied on 2026-04-08:
+
+- The target architecture is now explicit: keep `omniagent-engine` independently buildable and testable, while also embedding it in `omniagent-core` for project-scoped agent loops outside graph runtime.
 
 ## Review Method
 

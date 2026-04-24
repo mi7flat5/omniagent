@@ -65,6 +65,111 @@ inline std::string to_lower_copy(const std::string& value) {
     return lowered;
 }
 
+inline std::string trim_copy(std::string value) {
+    const auto not_space = [](unsigned char ch) {
+        return !std::isspace(ch);
+    };
+    value.erase(value.begin(),
+                std::find_if(value.begin(), value.end(), not_space));
+    value.erase(std::find_if(value.rbegin(), value.rend(), not_space).base(),
+                value.end());
+    return value;
+}
+
+inline std::string normalize_brief_turn_copy(std::string value) {
+    value = to_lower_copy(trim_copy(std::move(value)));
+    while (!value.empty()) {
+        const char ch = value.back();
+        if (ch == '!' || ch == '?' || ch == '.' || ch == ',') {
+            value.pop_back();
+            continue;
+        }
+        break;
+    }
+    return trim_copy(std::move(value));
+}
+
+inline bool is_social_or_meta_turn(const std::string& input) {
+    const std::string normalized = normalize_brief_turn_copy(input);
+    return normalized == "hi"
+        || normalized == "hello"
+        || normalized == "hey"
+        || normalized == "hi there"
+        || normalized == "hello there"
+        || normalized == "hey there"
+        || normalized == "thanks"
+        || normalized == "thank you"
+        || normalized == "who are you"
+        || normalized == "what are you"
+        || normalized == "what can you do"
+        || normalized == "help";
+}
+
+inline bool contains_any_phrase(const std::string& text,
+                                const std::vector<std::string>& phrases) {
+    return std::any_of(phrases.begin(), phrases.end(), [&](const std::string& phrase) {
+        return text.find(phrase) != std::string::npos;
+    });
+}
+
+enum class CoordinatorTurnStrategy {
+    Conversational,
+    DirectAudit,
+    Delegate,
+};
+
+inline CoordinatorTurnStrategy coordinator_turn_strategy(const std::string& input) {
+    const std::string normalized = normalize_brief_turn_copy(input);
+    if (normalized.empty()) {
+        return CoordinatorTurnStrategy::Conversational;
+    }
+
+    if (is_social_or_meta_turn(normalized)) {
+        return CoordinatorTurnStrategy::Conversational;
+    }
+
+    const std::vector<std::string> audit_phrases = {
+        "audit", "review", "full report", "findings", "security review",
+        "code quality", "review this code", "code audit"
+    };
+    if (contains_any_phrase(normalized, audit_phrases)) {
+        return CoordinatorTurnStrategy::DirectAudit;
+    }
+
+    const std::vector<std::string> work_phrases = {
+        "fix", "debug", "investigate", "implement", "add ", "change", "edit",
+        "refactor", "rename", "review", "audit", "inspect", "explore", "search",
+        "find", "open", "read", "list", "show", "run", "test", "build",
+        "compile", "plan", "spec", "workspace", "repo", "repository", "code",
+        "file", "files", "directory", "cwd", "project", "bug", "failure", "error"
+    };
+
+    if (contains_any_phrase(normalized, work_phrases)) {
+        return CoordinatorTurnStrategy::Delegate;
+    }
+
+    const std::vector<std::string> self_phrases = {
+        "your name", "you name", "rname", "who are", "what are you", "what can you"
+    };
+    if (contains_any_phrase(normalized, self_phrases)) {
+        return CoordinatorTurnStrategy::Conversational;
+    }
+
+    if ((normalized.find("you") != std::string::npos || normalized.find("your") != std::string::npos)
+        && normalized.size() <= 80) {
+        return CoordinatorTurnStrategy::Conversational;
+    }
+
+    return CoordinatorTurnStrategy::Delegate;
+}
+
+inline Message make_text_message(Role role, const std::string& text) {
+    Message message;
+    message.role = role;
+    message.content = {ContentBlock{TextContent{text}}};
+    return message;
+}
+
 inline Event enrich_event(const Event& event,
                           const std::string& project_id,
                           const std::string& session_id,
@@ -86,7 +191,7 @@ inline std::vector<AgentProfileManifest> default_profiles() {
     coordinator_policy.explicit_allow = {"agent", "send_message"};
     profiles.push_back(AgentProfileManifest{
         .name = "coordinator",
-        .system_prompt = "Act as a coordinator-only agent. Do not inspect the local filesystem directly, do not browse the web directly, and do not edit files directly. Delegate local investigation to explore agents, web-backed investigation to research agents, spec creation and validation to spec agents, and implementation planning to plan agents. When the user asks to build an application, drive a spec-first workflow that produces a validated SPEC.md before a plan worker generates and validates PLAN.json for graph execution.",
+        .system_prompt = "Act as a coordinator-only agent. Do not inspect the local filesystem directly, do not browse the web directly, and do not edit files directly. Delegate repository understanding to explore agents, findings-first review work to audit agents, failing behavior to bugfix agents, behavior-preserving cleanup to refactor agents, feature delivery to feature agents, web-backed investigation to research agents, spec creation and validation to spec agents, and implementation planning to plan agents. When feature scope or ambiguity is large, escalate into spec and plan artifacts that can hand off to the separate graph execution path instead of treating this loop as the graph executor. For exploratory or review tasks, prefer the minimum delegation needed to answer, avoid open-ended sweeps, and stop once gathered evidence is sufficient to respond. Answer tersely by default. Do not introduce yourself, announce your role, narrate routine delegation or exploration, or promise future help unless the user explicitly asked for that context. For greetings or short conversational turns, reply briefly and wait for the actual task.",
         .tool_policy = coordinator_policy,
         .default_permission_mode = PermissionMode::Bypass,
         .sub_agents_allowed = true,
@@ -95,10 +200,52 @@ inline std::vector<AgentProfileManifest> default_profiles() {
 
     profiles.push_back(AgentProfileManifest{
         .name = "explore",
-        .system_prompt = "Focus on inspection, explanation, and safe read-only investigation.",
+        .system_prompt = "Focus on existing-codebase inspection, explanation, and safe read-only investigation. Use the minimum tool calls needed to answer, avoid rereading the same files or rerunning the same searches unless confirming a concrete point, and once you have enough evidence, stop exploring and answer directly while calling out any remaining uncertainty.",
         .tool_policy = ToolCapabilityPolicy{},
-        .default_permission_mode = PermissionMode::Default,
+        .default_permission_mode = PermissionMode::Plan,
         .sub_agents_allowed = false,
+        .max_parallel_tools = 10,
+    });
+
+    ToolCapabilityPolicy feature_policy;
+    feature_policy.allow_write = true;
+    feature_policy.allow_shell = true;
+    feature_policy.explicit_allow = {
+        "bash",
+        "planner_validate_spec",
+        "planner_validate_plan",
+        "planner_repair_plan",
+        "planner_build_plan",
+        "planner_build_from_idea",
+    };
+    profiles.push_back(AgentProfileManifest{
+        .name = "feature",
+        .system_prompt = "Add or extend repository behavior. Inspect existing patterns first, implement directly when the change is contained, escalate into spec and plan artifacts when scope or ambiguity warrants it, and finish with targeted verification or an explicit explanation of what could not be run.",
+        .tool_policy = feature_policy,
+        .default_permission_mode = PermissionMode::AcceptEdits,
+        .sub_agents_allowed = false,
+        .max_parallel_tools = 10,
+    });
+
+    ToolCapabilityPolicy refactor_policy = feature_policy;
+    profiles.push_back(AgentProfileManifest{
+        .name = "refactor",
+        .system_prompt = "Improve repository structure while preserving behavior unless the user explicitly requests a semantic change. State the invariants or regression checks that must hold, keep edits reviewable, and finish with targeted verification.",
+        .tool_policy = refactor_policy,
+        .default_permission_mode = PermissionMode::AcceptEdits,
+        .sub_agents_allowed = false,
+        .max_parallel_tools = 10,
+    });
+
+    ToolCapabilityPolicy audit_policy;
+    audit_policy.explicit_allow = {"planner_validate_review"};
+    profiles.push_back(AgentProfileManifest{
+        .name = "audit",
+        .system_prompt = "Review code or recent changes without modifying the workspace. Run the audit systematically: first map the relevant repository surface, entrypoints, and ownership boundaries; then inspect at least one validation or contract surface when present, such as tests, CLI behavior, schemas, config loaders, API contracts, or explicit command output; then pair each finding with both the implementation evidence and the violated contract or observed behavior. Report findings first, order them by severity, include evidence, and state explicitly when no findings are present. Every finding must be directly supported by gathered evidence from the conversation. If the exact code, symbol, or tool output is not present or is contradicted by the evidence, omit the finding instead of speculating. Do not label something a test bug or mock issue unless the evidence explicitly shows the test expectation or patch target is wrong; otherwise describe the code/test contract mismatch neutrally. Do not pad the answer with generic sections such as broad summaries, missing features, documentation advice, security considerations, or production-readiness claims unless the user explicitly asked for them or the evidence directly supports them. Only state counts or percentages when they come from explicit tool output. If tests or command output show multiple distinct failure clusters, reflect those actual clusters instead of collapsing them into a single guessed root cause. When planner_validate_review is available and a tracked review case exists, validate your draft report text before finishing, and if validation says required coverage is missing, gather the missing evidence with targeted reads or searches before you finalize. Prefer targeted inspection over broad sweeps, avoid repeated rereads once the evidence is already sufficient, and answer as soon as the current evidence supports a conclusion.",
+        .tool_policy = audit_policy,
+        .default_permission_mode = PermissionMode::Plan,
+        .sub_agents_allowed = false,
+        .enforce_evidence_based_final_answer = true,
         .max_parallel_tools = 10,
     });
 
@@ -139,20 +286,20 @@ inline std::vector<AgentProfileManifest> default_profiles() {
     research_policy.allow_mcp = true;
     profiles.push_back(AgentProfileManifest{
         .name = "research",
-        .system_prompt = "Gather evidence, compare sources, and summarize findings clearly.",
+        .system_prompt = "Gather evidence, compare sources, and summarize findings clearly. Prefer focused source collection over open-ended browsing, avoid repeating the same searches or sources unless confirming a concrete point, and stop once the available evidence is enough to answer.",
         .tool_policy = research_policy,
-        .default_permission_mode = PermissionMode::Default,
+        .default_permission_mode = PermissionMode::Plan,
         .sub_agents_allowed = false,
         .max_parallel_tools = 10,
     });
 
     ToolCapabilityPolicy bugfix_policy;
     bugfix_policy.allow_write = true;
-    bugfix_policy.allow_destructive = true;
     bugfix_policy.allow_shell = true;
+    bugfix_policy.explicit_allow = {"bash", "planner_validate_bugfix"};
     profiles.push_back(AgentProfileManifest{
         .name = "bugfix",
-        .system_prompt = "Fix the problem directly, using edits and commands when necessary.",
+        .system_prompt = "Fix failing behavior by capturing the repro, isolating the root cause, applying the smallest defensible fix, and rerunning targeted verification or explaining what blocked validation. When planner_validate_bugfix is available and you have a tracked case id or case path, validate the final writeup before finishing.",
         .tool_policy = bugfix_policy,
         .default_permission_mode = PermissionMode::AcceptEdits,
         .sub_agents_allowed = false,
@@ -305,6 +452,7 @@ struct RunState {
     bool stop_requested = false;
     bool finalised = false;
     bool settled = false;
+    bool restore_profile_runtime = false;
     std::optional<ApprovalDecision> pending_resolution;
 };
 
@@ -412,6 +560,8 @@ inline std::string runtime_environment_prompt(
         prompt += "Workspace boundary: stay within the workspace root unless the runtime explicitly directs otherwise.\n";
     }
     prompt += "Treat the selected workspace as the source tree you should inspect and modify.\n";
+    prompt += "Default to concise, task-focused responses. Do not introduce yourself, restate your role, or narrate routine background work unless the user asked for that detail.\n";
+    prompt += "If you need to inspect before answering, do the inspection and then report the result instead of announcing that you are about to inspect.\n";
     prompt += "Do not claim that you lack a filesystem, a working directory, or access to project files.\n";
     prompt += "If asked about the workspace or working directory, answer from the paths above and use available tools to verify details when needed.\n";
     prompt += "Do not end a turn with thinking only; either answer directly or call an available workspace tool to gather the missing information.\n";
@@ -455,16 +605,24 @@ inline std::vector<std::string> allowed_tools_for_profile(
     return allowed;
 }
 
+inline void apply_runtime_profile_locked(const std::shared_ptr<SessionState>& session_state,
+                                         const HostState& host_state,
+                                         const AgentProfileManifest& profile) {
+    session_state->session->set_system_prompt(
+        composed_system_prompt(session_state, host_state, profile));
+    session_state->session->set_permission_mode(profile.default_permission_mode);
+    session_state->session->set_evidence_based_final_answer(
+        profile.enforce_evidence_based_final_answer);
+    session_state->session->set_max_parallel_tools(profile.max_parallel_tools);
+    session_state->session->set_tool_filter(
+        allowed_tools_for_profile(session_state, host_state, profile));
+}
+
 inline void apply_profile_filter_locked(const std::shared_ptr<SessionState>& session_state,
                                         const HostState& host_state) {
     const auto& profile = resolve_profile(host_state, session_state->active_profile);
     session_state->active_profile = profile.name;
-    session_state->session->set_system_prompt(
-        composed_system_prompt(session_state, host_state, profile));
-    session_state->session->set_permission_mode(profile.default_permission_mode);
-    session_state->session->set_max_parallel_tools(profile.max_parallel_tools);
-    session_state->session->set_tool_filter(
-        allowed_tools_for_profile(session_state, host_state, profile));
+    apply_runtime_profile_locked(session_state, host_state, profile);
 }
 
 inline void clear_active_run_if_matches(const std::shared_ptr<SessionState>& session_state,
@@ -473,6 +631,45 @@ inline void clear_active_run_if_matches(const std::shared_ptr<SessionState>& ses
     if (session_state->active_run == run_state) {
         session_state->active_run.reset();
     }
+}
+
+inline void bind_run_tool_context_locked(const std::shared_ptr<SessionState>& session_state,
+                                         const std::shared_ptr<HostState>& host_state,
+                                         const std::shared_ptr<RunState>& run_state) {
+    session_state->session->set_tool_context(ToolContext{
+        .project_id = session_state->project_id,
+        .session_id = session_state->session_id,
+        .run_id = run_state->result.run_id,
+        .profile = session_state->active_profile,
+        .workspace_root = host_state->config.workspace.workspace_root,
+        .working_dir = session_state->working_dir,
+    });
+}
+
+inline void restore_profile_runtime_if_needed(const std::shared_ptr<SessionState>& session_state,
+                                              const std::shared_ptr<RunState>& run_state) {
+    bool should_restore = false;
+    {
+        std::lock_guard<std::mutex> run_lock(run_state->mutex);
+        should_restore = run_state->restore_profile_runtime;
+        if (should_restore) {
+            run_state->restore_profile_runtime = false;
+        }
+    }
+    if (!should_restore) {
+        return;
+    }
+
+    auto host_state = session_state->host.lock();
+    if (!host_state) {
+        return;
+    }
+    std::lock_guard<std::mutex> session_lock(session_state->mutex);
+    if (session_state->closed) {
+        return;
+    }
+    const auto& profile = resolve_profile(*host_state, session_state->active_profile);
+    apply_runtime_profile_locked(session_state, *host_state, profile);
 }
 
 inline void finalize_run_state(const std::shared_ptr<RunState>& run_state,
@@ -491,10 +688,15 @@ inline void finalize_run_state(const std::shared_ptr<RunState>& run_state,
             final_status = RunStatus::Stopped;
         } else if (run_state->result.error.has_value()) {
             final_status = RunStatus::Failed;
+        } else if (run_state->result.pending_clarification.has_value()) {
+            final_status = RunStatus::Paused;
+            run_state->result.pause_reason = "clarification_required";
         }
 
         run_state->result.status = final_status;
-        run_state->result.pause_reason.reset();
+        if (!run_state->result.pending_clarification.has_value()) {
+            run_state->result.pause_reason.reset();
+        }
         run_state->result.pending_approval.reset();
         run_state->pending_resolution.reset();
         run_state->finalised = true;
@@ -589,7 +791,8 @@ inline void persist_run_state(const std::shared_ptr<RunState>& run_state) {
 
     RunPersistence persistence = make_run_persistence(*host_state);
     persistence.save(result);
-    if (result.status == RunStatus::Paused && result.pending_approval.has_value()) {
+    if (result.status == RunStatus::Paused
+        && (result.pending_approval.has_value() || result.pending_clarification.has_value())) {
         persistence.save_pending(result);
     } else {
         persistence.clear_pending(result.run_id);
@@ -663,6 +866,176 @@ inline std::shared_ptr<HostState> require_host_state(const std::shared_ptr<Sessi
         throw std::runtime_error("project host is no longer available");
     }
     return host_state;
+}
+
+inline void launch_run_execution(const std::shared_ptr<SessionState>& session_state,
+                                 const std::shared_ptr<RunState>& run_state,
+                                 const std::string& input) {
+    if (session_state->active_profile == "coordinator") {
+        auto host_state = require_host_state(session_state);
+        const auto strategy = coordinator_turn_strategy(input);
+        std::lock_guard<std::mutex> session_lock(session_state->mutex);
+        if (strategy == CoordinatorTurnStrategy::Conversational) {
+            session_state->session->set_tool_filter({});
+            std::lock_guard<std::mutex> run_lock(run_state->mutex);
+            run_state->restore_profile_runtime = true;
+        } else if (strategy == CoordinatorTurnStrategy::DirectAudit) {
+            const auto audit_profile = resolve_profile(*host_state, "audit");
+            apply_runtime_profile_locked(session_state, *host_state, audit_profile);
+            std::lock_guard<std::mutex> run_lock(run_state->mutex);
+            run_state->result.profile = audit_profile.name;
+            run_state->restore_profile_runtime = true;
+        } else {
+            const auto& coordinator_profile = resolve_profile(*host_state, session_state->active_profile);
+            apply_runtime_profile_locked(session_state, *host_state, coordinator_profile);
+        }
+    }
+
+    try {
+        session_state->session->submit(input);
+
+        std::thread([session_state, run_state]() {
+            try {
+                session_state->session->wait();
+            } catch (const std::exception& error) {
+                {
+                    std::lock_guard<std::mutex> run_lock(run_state->mutex);
+                    if (!run_state->finalised) {
+                        run_state->result.error = error.what();
+                    }
+                }
+                finalize_run_state(run_state, RunStatus::Failed);
+                persist_run_state(run_state);
+                restore_profile_runtime_if_needed(session_state, run_state);
+                clear_active_run_if_matches(session_state, run_state);
+                mark_run_settled(run_state);
+                return;
+            }
+
+            bool should_emit_terminal = false;
+            RunStatus final_status = RunStatus::Completed;
+            std::optional<std::string> pause_reason;
+            {
+                std::lock_guard<std::mutex> run_lock(run_state->mutex);
+                should_emit_terminal = !run_state->finalised
+                    && (run_state->cancel_requested || run_state->stop_requested);
+            }
+
+            finalize_run_state(run_state, RunStatus::Completed);
+            persist_run_state(run_state);
+            {
+                std::lock_guard<std::mutex> run_lock(run_state->mutex);
+                final_status = run_state->result.status;
+                pause_reason = run_state->result.pause_reason;
+            }
+            if (should_emit_terminal) {
+                if (final_status == RunStatus::Stopped) {
+                    dispatch_run_event(run_state, RunStoppedEvent{run_state->result.run_id, {}});
+                } else if (final_status == RunStatus::Cancelled) {
+                    dispatch_run_event(run_state, RunCancelledEvent{run_state->result.run_id, {}});
+                }
+            } else if (final_status == RunStatus::Paused) {
+                dispatch_run_event(run_state,
+                                   RunPausedEvent{run_state->result.run_id,
+                                                  pause_reason.value_or("paused"),
+                                                  {}});
+            }
+            if (final_status != RunStatus::Paused) {
+                restore_profile_runtime_if_needed(session_state, run_state);
+            }
+            if (final_status != RunStatus::Paused) {
+                clear_active_run_if_matches(session_state, run_state);
+            }
+            mark_run_settled(run_state);
+        }).detach();
+    } catch (const std::exception& error) {
+        run_state->result.error = error.what();
+        finalize_run_state(run_state, RunStatus::Failed);
+        persist_run_state(run_state);
+        restore_profile_runtime_if_needed(session_state, run_state);
+        clear_active_run_if_matches(session_state, run_state);
+        mark_run_settled(run_state);
+    }
+}
+
+inline bool resume_live_run(const std::shared_ptr<RunState>& run_state,
+                            const std::string& resume_input) {
+    const auto session_state = run_state->session.lock();
+    if (!session_state) {
+        return false;
+    }
+
+    bool has_pending_approval = false;
+    bool has_pending_clarification = false;
+    {
+        std::lock_guard<std::mutex> run_lock(run_state->mutex);
+        if (run_state->result.status != RunStatus::Paused) {
+            return false;
+        }
+        has_pending_approval = run_state->result.pending_approval.has_value();
+        has_pending_clarification = run_state->result.pending_clarification.has_value();
+    }
+
+    if (has_pending_approval) {
+        const auto decision = parse_resume_decision(resume_input);
+        {
+            std::lock_guard<std::mutex> run_lock(run_state->mutex);
+            if (run_state->result.status != RunStatus::Paused
+                || !run_state->result.pending_approval.has_value()) {
+                return false;
+            }
+            run_state->pending_resolution = decision;
+            run_state->result.status = RunStatus::Running;
+            run_state->result.pause_reason.reset();
+            run_state->result.pending_approval.reset();
+        }
+        persist_run_state(run_state);
+        run_state->approval_cv.notify_all();
+        return true;
+    }
+
+    if (!has_pending_clarification) {
+        return false;
+    }
+
+    auto host_state = session_state->host.lock();
+    if (!host_state) {
+        return false;
+    }
+
+    {
+        std::lock_guard<std::mutex> session_lock(session_state->mutex);
+        if (session_state->closed) {
+            return false;
+        }
+        if (session_state->active_run && session_state->active_run != run_state) {
+            return false;
+        }
+        session_state->active_run = run_state;
+        bind_run_tool_context_locked(session_state, host_state, run_state);
+    }
+
+    std::string run_id;
+    {
+        std::lock_guard<std::mutex> run_lock(run_state->mutex);
+        if (run_state->result.status != RunStatus::Paused
+            || !run_state->result.pending_clarification.has_value()) {
+            return false;
+        }
+        run_id = run_state->result.run_id;
+        run_state->result.status = RunStatus::Running;
+        run_state->result.pause_reason.reset();
+        run_state->result.pending_clarification.reset();
+        run_state->result.finished_at = {};
+        run_state->pending_resolution.reset();
+        run_state->finalised = false;
+        run_state->settled = false;
+    }
+
+    persist_run_state(run_state);
+    dispatch_run_event(run_state, RunResumedEvent{run_id, {}});
+    launch_run_execution(session_state, run_state, resume_input);
+    return true;
 }
 
 }  // namespace omni::engine

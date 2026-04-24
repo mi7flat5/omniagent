@@ -113,6 +113,28 @@ private:
     std::size_t size_;
 };
 
+class PlannerClarificationTool : public Tool {
+public:
+    std::string    name()         const override { return "planner_build_plan"; }
+    std::string    description()  const override { return "Returns a planner clarification banner"; }
+    nlohmann::json input_schema() const override { return {}; }
+    bool           is_read_only()    const override { return false; }
+    bool           is_destructive()  const override { return false; }
+
+    ToolCallResult call(const nlohmann::json&) override {
+        return {
+            "PLANNER_BUILD_PLAN STATUS: CLARIFICATION_REQUIRED\n"
+            "workflow_passed: false\n"
+            "clarification_required: true\n"
+            "questions:\n"
+            "- spec-clar-gap-001: Should queues be tenant scoped?\n"
+            "raw_json:\n"
+            + std::string(800, 'x'),
+            true,
+        };
+    }
+};
+
 class AllowAllDelegate : public PermissionDelegate {
 public:
     PermissionDecision on_permission_request(const std::string&,
@@ -440,6 +462,33 @@ TEST(StreamingToolExecutorTest, LargeResultTruncation) {
               static_cast<std::size_t>(cfg.max_result_chars) + 80u);  // +80 for suffix
     EXPECT_NE(results[0].content.find("[truncated"), std::string::npos);
     EXPECT_NE(results[0].content.find("100000"), std::string::npos);
+}
+
+TEST(StreamingToolExecutorTest, PlannerClarificationPayloadIsNotTruncated) {
+    ToolRegistry reg;
+    reg.register_tool(std::make_unique<PlannerClarificationTool>());
+
+    AllowAllDelegate   delegate;
+    PermissionChecker  checker(delegate);
+    CollectingObserver obs;
+
+    ToolExecutorConfig cfg;
+    cfg.max_result_chars = 64;
+
+    ToolExecutor executor(reg, checker, obs, cfg);
+
+    std::vector<ToolUseContent> calls = {{"clar-1", "planner_build_plan", {}}};
+
+    std::atomic<bool> cancelled{false};
+    auto exec_r = executor.execute(calls, cancelled);
+    auto& results = exec_r.results;
+
+    ASSERT_EQ(results.size(), 1u);
+    EXPECT_TRUE(results[0].is_error);
+    EXPECT_EQ(results[0].content.find("[truncated"), std::string::npos);
+    EXPECT_NE(results[0].content.find("STATUS: CLARIFICATION_REQUIRED"), std::string::npos);
+    EXPECT_NE(results[0].content.find("raw_json:\n"), std::string::npos);
+    EXPECT_GT(results[0].content.size(), static_cast<std::size_t>(cfg.max_result_chars));
 }
 
 TEST(StreamingToolExecutorTest, DoomLoopDetection) {

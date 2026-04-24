@@ -1,0 +1,66 @@
+{
+  "id": "streamed-tool-call-json-reconstruction",
+  "kind": "bugfix",
+  "title": "Streamed tool-call JSON reconstruction in HttpProvider",
+  "repro_groups": [
+    [
+      "streamed tool calls",
+      "chunked tool arguments",
+      "split across two sse chunks"
+    ],
+    [
+      "HttpProvider::parse_sse_line",
+      "parse_sse_line"
+    ],
+    [
+      "read_file",
+      "README.md",
+      "tool_calls"
+    ]
+  ],
+  "root_cause_groups": [
+    [
+      "open_tool_blocks",
+      "ContentBlockStop"
+    ],
+    [
+      "input_json_delta",
+      "fragmented JSON",
+      "arguments fragments"
+    ]
+  ],
+  "fix_groups": [
+    [
+      "ContentBlockStop",
+      "close every open tool block",
+      "close open tool blocks"
+    ],
+    [
+      "input_json_delta",
+      "reconstruct the full arguments json",
+      "reconstruct the full JSON arguments"
+    ]
+  ],
+  "verification_groups": [
+    [
+      "SendsToolChoiceAndAssemblesStreamedToolCalls",
+      "test_http_provider"
+    ],
+    [
+      "README.md"
+    ],
+    [
+      "start == 1",
+      "start equals 1"
+    ]
+  ],
+  "forbidden_patterns": [
+    {
+      "id": "unsupported-global-success",
+      "patterns": [
+        "all tests pass",
+        "everything passes"
+      ]
+    }
+  ]
+}

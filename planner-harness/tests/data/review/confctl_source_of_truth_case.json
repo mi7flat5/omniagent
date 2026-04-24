@@ -1,0 +1,112 @@
+{
+  "id": "confctl-source-of-truth-2026-04-08",
+  "kind": "review",
+  "title": "Confctl source-of-truth audit against current repository state",
+  "subject": {
+    "repo_name": "confctl",
+    "repo_path": "/home/mi7fl/projects/confctl"
+  },
+  "baseline": {
+    "command": "pytest -q",
+    "summary": "42 failed, 72 passed in 1.19s",
+    "required_terms": [
+      "42 failed",
+      "72 passed"
+    ]
+  },
+  "required_findings": [
+    {
+      "id": "schema-fields-root-contract",
+      "cluster": "schema",
+      "severity": "HIGH",
+      "required_groups": [
+        [
+          "load_schema",
+          "confctl/schema.py"
+        ],
+        [
+          "fields",
+          "top-level yaml",
+          "Missing required field 'type' for field 'fields'"
+        ]
+      ]
+    },
+    {
+      "id": "store-schema-model-mismatch",
+      "cluster": "store",
+      "severity": "HIGH",
+      "required_groups": [
+        [
+          "ConfigStore",
+          "confctl/store.py",
+          "_cast_value"
+        ],
+        [
+          "field.type",
+          "value_type",
+          "AttributeError"
+        ]
+      ]
+    },
+    {
+      "id": "cli-contract-mismatch",
+      "cluster": "cli",
+      "severity": "HIGH",
+      "required_groups": [
+        [
+          "confctl/cli.py",
+          "tests/test_cli.py",
+          "CLI"
+        ],
+        [
+          "--schema",
+          "diff",
+          "file1",
+          "file2"
+        ]
+      ]
+    },
+    {
+      "id": "loader-normalization-mismatch",
+      "cluster": "loader",
+      "severity": "MEDIUM",
+      "required_groups": [
+        [
+          "confctl/loader.py",
+          "tests/test_loader.py",
+          "load_env_vars"
+        ],
+        [
+          "CONFCTL_A__B",
+          "empty prefix",
+          "a.b",
+          "double underscore"
+        ]
+      ]
+    }
+  ],
+  "min_required_clusters": 4,
+  "forbidden_patterns": [
+    {
+      "id": "invented-syntax-error",
+      "patterns": [
+        "SyntaxError",
+        "syntax error"
+      ]
+    },
+    {
+      "id": "unsupported-test-blame",
+      "patterns": [
+        "test bug",
+        "mock issue",
+        "mock bug"
+      ]
+    }
+  ],
+  "forbidden_section_titles": [
+    "Security Considerations",
+    "Production Readiness",
+    "Missing Features",
+    "Documentation Suggestions"
+  ]
+}

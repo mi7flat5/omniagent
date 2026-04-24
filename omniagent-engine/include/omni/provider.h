@@ -37,6 +37,11 @@ struct CompletionRequest {
     std::vector<nlohmann::json> tools;
     std::optional<std::string>  tool_choice;
     std::optional<double>       temperature;
+    std::optional<double>       top_p;
+    std::optional<int>          top_k;
+    std::optional<double>       min_p;
+    std::optional<double>       presence_penalty;
+    std::optional<double>       frequency_penalty;
     std::optional<int>          max_tokens;
     std::vector<std::string>    stop_sequences;
 };

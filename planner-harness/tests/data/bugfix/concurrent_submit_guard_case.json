@@ -1,0 +1,67 @@
+{
+  "id": "concurrent-submit-guard",
+  "kind": "bugfix",
+  "title": "Reject concurrent submit on the same session",
+  "repro_groups": [
+    [
+      "RejectsConcurrentSubmitOnSameSession",
+      "concurrent submit",
+      "second submit"
+    ],
+    [
+      "same session",
+      "in-flight submit"
+    ],
+    [
+      "RHBlockingProvider",
+      "blocked provider",
+      "first submit blocked"
+    ]
+  ],
+  "root_cause_groups": [
+    [
+      "submit_mutex",
+      "submit_done"
+    ],
+    [
+      "no guardrail",
+      "missing guard",
+      "in-flight submit"
+    ]
+  ],
+  "fix_groups": [
+    [
+      "submit_mutex",
+      "submit_done"
+    ],
+    [
+      "throw std::runtime_error",
+      "already has an in-flight submit",
+      "reject the second submit"
+    ]
+  ],
+  "verification_groups": [
+    [
+      "RejectsConcurrentSubmitOnSameSession",
+      "test_runtime_hardening"
+    ],
+    [
+      "EXPECT_THROW",
+      "runtime_error"
+    ],
+    [
+      "EXPECT_NO_THROW",
+      "session->wait",
+      "release the provider"
+    ]
+  ],
+  "forbidden_patterns": [
+    {
+      "id": "unsupported-global-success",
+      "patterns": [
+        "all tests pass",
+        "everything passes"
+      ]
+    }
+  ]
+}

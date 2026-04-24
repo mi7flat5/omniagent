@@ -96,6 +96,14 @@ std::unique_ptr<Session> Engine::create_session(EventObserver& observer,
     qcfg.max_turns               = impl_->config.max_turns;
     qcfg.preserve_tail           = impl_->config.preserve_tail;
     qcfg.max_result_chars        = impl_->config.max_result_chars;
+    qcfg.compact_max_result_chars = impl_->config.compact_max_result_chars;
+    qcfg.temperature             = impl_->config.temperature;
+    qcfg.top_p                   = impl_->config.top_p;
+    qcfg.top_k                   = impl_->config.top_k;
+    qcfg.min_p                   = impl_->config.min_p;
+    qcfg.presence_penalty        = impl_->config.presence_penalty;
+    qcfg.frequency_penalty       = impl_->config.frequency_penalty;
+    qcfg.initial_max_tokens      = impl_->config.initial_max_tokens;
     qcfg.system_prompt           = impl_->config.system_prompt;
     qcfg.max_parallel_tools      = 10;
     qcfg.compact_soft_limit_pct  = impl_->config.compact_soft_limit_pct;

@@ -22,7 +22,7 @@ nlohmann::json AgentTool::input_schema() const {
         {"type", "object"},
         {"properties", {
             {"task",       {{"type", "string"},  {"description", "The task for the agent"}}},
-            {"type",       {{"type", "string"},  {"enum", {"general", "explore", "research", "spec", "plan"}},
+            {"type",       {{"type", "string"},  {"enum", {"general", "explore", "feature", "refactor", "audit", "bugfix", "research", "spec", "plan"}},
                             {"description", "Agent type"}}},
             {"background", {{"type", "boolean"}, {"description", "Run in background"}}},
             {"name",       {{"type", "string"},  {"description", "Optional name for addressing via send_message"}}}
@@ -43,6 +43,14 @@ ToolCallResult AgentTool::call(const nlohmann::json& args) {
     const std::string type_str = args.value("type", "general");
     if (type_str == "explore") {
         config.type = AgentType::Explore;
+    } else if (type_str == "feature") {
+        config.type = AgentType::Feature;
+    } else if (type_str == "refactor") {
+        config.type = AgentType::Refactor;
+    } else if (type_str == "audit") {
+        config.type = AgentType::Audit;
+    } else if (type_str == "bugfix") {
+        config.type = AgentType::Bugfix;
     } else if (type_str == "research") {
         config.type = AgentType::Research;
     } else if (type_str == "spec") {

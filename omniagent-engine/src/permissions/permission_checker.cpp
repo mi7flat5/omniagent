@@ -113,7 +113,9 @@ bool PermissionChecker::is_edit_tool(const std::string& tool_name) const {
 PermissionDecision PermissionChecker::check(
     const std::string&    tool_name,
     const nlohmann::json& args,
-    const std::string&    description)
+    const std::string&    description,
+    bool                  tool_is_read_only,
+    bool                  tool_is_destructive)
 {
     std::unique_lock<std::mutex> lk(mutex_);
 
@@ -160,7 +162,13 @@ PermissionDecision PermissionChecker::check(
         return PermissionDecision::Allow;
     }
 
-    // Plan mode falls through to Default behaviour for now (Phase 3).
+    if (current_mode == PermissionMode::Plan) {
+        // Plan mode favors low-risk inspection tools and requires approval for
+        // anything that can mutate state or execute potentially dangerous work.
+        if (tool_is_read_only && !tool_is_destructive && !is_edit_tool(tool_name)) {
+            return PermissionDecision::Allow;
+        }
+    }
 
     // -----------------------------------------------------------------------
     // 3. Allow pass: any Allow rule matching tool → allow without asking.

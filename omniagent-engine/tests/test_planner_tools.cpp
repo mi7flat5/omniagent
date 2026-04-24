@@ -3,6 +3,7 @@
 #include "tools/planner_tools.h"
 #include "tools/workspace_tools.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 
@@ -11,6 +12,46 @@ using namespace omni::engine;
 namespace {
 
 namespace fs = std::filesystem;
+
+class ScopedEnvVar {
+public:
+    explicit ScopedEnvVar(const char* name)
+        : name_(name) {
+        if (const char* existing = std::getenv(name_)) {
+            had_value_ = true;
+            old_value_ = existing;
+        }
+    }
+
+    ~ScopedEnvVar() {
+        if (had_value_) {
+            set(old_value_);
+        } else {
+            unset();
+        }
+    }
+
+    void set(const std::string& value) {
+#ifdef _WIN32
+        _putenv_s(name_, value.c_str());
+#else
+        setenv(name_, value.c_str(), 1);
+#endif
+    }
+
+    void unset() {
+#ifdef _WIN32
+        _putenv_s(name_, "");
+#else
+        unsetenv(name_);
+#endif
+    }
+
+private:
+    const char* name_;
+    bool had_value_ = false;
+    std::string old_value_;
+};
 
 std::string raw_json_text(const std::string& content) {
     const std::string marker = "raw_json:\n";
@@ -100,6 +141,10 @@ protected:
             + ", skip, "
             + (failure_detail.empty() ? "''" : ("'" + failure_detail + "'"))
             + "), 'spec_path': str(Path(args[1]).resolve()), 'plan_path': str(Path(args[2]).resolve())}\n"
+            "elif command == 'validate-review':\n"
+            "    payload = {'ok': True, 'command': 'validate-review', 'case_path': str(Path(args[1]).resolve()), 'report_path': str(Path(args[2]).resolve()), 'case_id': Path(args[1]).stem, 'stage': stage(True, skip)}\n"
+            "elif command == 'validate-bugfix':\n"
+            "    payload = {'ok': True, 'command': 'validate-bugfix', 'case_path': str(Path(args[1]).resolve()), 'report_path': str(Path(args[2]).resolve()), 'case_id': Path(args[1]).stem, 'stage': stage(True, skip)}\n"
             "elif command == 'repair-plan':\n"
             "    spec_path = Path(args[1]).resolve()\n"
             "    input_plan = Path(args[2]).resolve()\n"
@@ -174,6 +219,146 @@ protected:
             "print(json.dumps(payload))\n");
     }
 
+    void write_bridge_clarification_stub(const std::string& mode) {
+        write_text(
+            workspace_root_ / "planner-harness" / "bridge.py",
+            "import json\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "args = sys.argv[1:]\n"
+            "if args and args[0] == '--config':\n"
+            "    args = args[2:]\n"
+            "command = args[0]\n"
+            "payload = {\n"
+            "    'ok': True,\n"
+            "    'command': command,\n"
+            "    'workflow_passed': False,\n"
+            "    'clarification_required': True,\n"
+            "    'clarifications': [\n"
+            "        {\n"
+            "            'id': 'spec-clar-gap-001',\n"
+            "            'stage': 'spec',\n"
+            "            'severity': 'BLOCKING',\n"
+            "            'quote': 'Tenant model unclear',\n"
+            "            'question': 'Should worker queue enforcement be tenant-scoped?',\n"
+            "            'recommended_default': 'enforce tenant_id at dequeue and DB boundary',\n"
+            "            'answer_type': 'text',\n"
+            "            'options': []\n"
+            "        }\n"
+            "    ],\n"
+            "    'pending_clarification_ids': ['spec-clar-gap-001'],\n"
+            "    'clarification': {\n"
+            "        'clarification_required': True,\n"
+            "        'clarification_mode': 'required',\n"
+            "        'clarifications': [\n"
+            "            {\n"
+            "                'id': 'spec-clar-gap-001',\n"
+            "                'question': 'Should worker queue enforcement be tenant-scoped?'\n"
+            "            }\n"
+            "        ],\n"
+            "        'pending_clarification_ids': ['spec-clar-gap-001'],\n"
+            "        'clarification_message': ''\n"
+            "    }\n"
+            "}\n"
+            "if command == 'build-from-idea':\n"
+            "    spec_path = Path(args[args.index('--spec-output') + 1]).resolve()\n"
+            "    payload['artifacts'] = {'spec_path': str(spec_path)}\n"
+            "elif command == 'run':\n"
+            "    prompt_path = Path(args[args.index('--prompt-output') + 1]).resolve()\n"
+            "    plan_path = Path(args[args.index('--plan-output') + 1]).resolve()\n"
+            "    payload['artifacts'] = {'prompt_path': str(prompt_path), 'plan_path': str(plan_path)}\n"
+            "    payload['spec_validation'] = {'passed': False, 'adversary': {'blocking_gaps': 1}}\n"
+            "    payload['plan_validation'] = {'passed': False, 'adversary': {'blocking_gaps': 1}}\n"
+            "print(json.dumps(payload))\n");
+        (void)mode;
+    }
+
+    void write_tracked_case(const fs::path& repo_root,
+                            const std::string& kind,
+                            const std::string& filename,
+                            const std::string& content = "{}\n") {
+        write_text(repo_root / "planner-harness" / "tests" / "data" / kind / filename, content);
+    }
+
+    void write_external_bridge_stub(const fs::path& repo_root) {
+        write_text(
+            repo_root / "planner-harness" / "bridge.py",
+            "import json\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "args = sys.argv[1:]\n"
+            "if args and args[0] == '--config':\n"
+            "    args = args[2:]\n"
+            "skip = '--skip-adversary' in args\n"
+            "command = args[0]\n"
+            "payload = {\n"
+            "    'ok': True,\n"
+            "    'command': command,\n"
+            "    'case_path': str(Path(args[1]).resolve()),\n"
+            "    'report_path': str(Path(args[2]).resolve()),\n"
+            "    'case_id': Path(args[1]).stem,\n"
+            "    'stage': {\n"
+            "        'passed': True,\n"
+            "        'rubric_score': 100.0,\n"
+            "        'adversary_score': 100.0,\n"
+            "        'combined_score': 100.0,\n"
+            "        'rubric_checks': [],\n"
+            "        'adversary': {\n"
+            "            'skipped': skip,\n"
+            "            'error': '',\n"
+            "            'blocking_gaps': 0,\n"
+            "            'blocking_guesses': 0,\n"
+            "            'contradiction_count': 0,\n"
+            "            'gaps': [],\n"
+            "            'guesses': [],\n"
+            "            'contradictions': [],\n"
+            "        },\n"
+            "    },\n"
+            "}\n"
+            "print(json.dumps(payload))\n");
+    }
+
+    void write_review_failure_bridge_stub() {
+        write_text(
+            workspace_root_ / "planner-harness" / "bridge.py",
+            "import json\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "args = sys.argv[1:]\n"
+            "if args and args[0] == '--config':\n"
+            "    args = args[2:]\n"
+            "skip = '--skip-adversary' in args\n"
+            "payload = {\n"
+            "    'ok': True,\n"
+            "    'command': 'validate-review',\n"
+            "    'case_path': str(Path(args[1]).resolve()),\n"
+            "    'report_path': str(Path(args[2]).resolve()),\n"
+            "    'case_id': 'confctl-source-of-truth-2026-04-08',\n"
+            "    'stage': {\n"
+            "        'passed': False,\n"
+            "        'rubric_score': 12.0,\n"
+            "        'adversary_score': 100.0,\n"
+            "        'combined_score': 12.0,\n"
+            "        'rubric_checks': [\n"
+            "            {'name': 'Baseline reflected', 'weight': 3, 'passed': False, 'detail': 'Missing baseline terms: 42 failed, 72 passed'},\n"
+            "            {'name': 'Required findings covered', 'weight': 6, 'passed': False, 'detail': 'Missing findings: schema-fields-root-contract, store-schema-model-mismatch'},\n"
+            "            {'name': 'Distinct clusters preserved', 'weight': 5, 'passed': False, 'detail': 'Only 1/4 clusters covered: schema'}\n"
+            "        ],\n"
+            "        'adversary': {\n"
+            "            'skipped': skip,\n"
+            "            'error': '',\n"
+            "            'blocking_gaps': 0,\n"
+            "            'blocking_guesses': 0,\n"
+            "            'contradiction_count': 0,\n"
+            "            'gaps': [],\n"
+            "            'guesses': [],\n"
+            "            'contradictions': [],\n"
+            "        },\n"
+            "    },\n"
+            "}\n"
+            "print(json.dumps(payload))\n");
+    }
+
     fs::path workspace_root_;
     ToolContext context_;
 };
@@ -187,6 +372,8 @@ TEST_F(PlannerToolsTest, DefaultWorkspaceToolsIncludePlannerTools) {
 
     EXPECT_NE(std::find(names.begin(), names.end(), "planner_validate_spec"), names.end());
     EXPECT_NE(std::find(names.begin(), names.end(), "planner_validate_plan"), names.end());
+    EXPECT_NE(std::find(names.begin(), names.end(), "planner_validate_review"), names.end());
+    EXPECT_NE(std::find(names.begin(), names.end(), "planner_validate_bugfix"), names.end());
     EXPECT_NE(std::find(names.begin(), names.end(), "planner_repair_plan"), names.end());
     EXPECT_NE(std::find(names.begin(), names.end(), "planner_build_plan"), names.end());
     EXPECT_NE(std::find(names.begin(), names.end(), "planner_build_from_idea"), names.end());
@@ -227,13 +414,28 @@ TEST_F(PlannerToolsTest, BuildFromIdeaReturnsArtifactsAndGraphValidation) {
     EXPECT_EQ(payload.at("artifacts").at("plan_path_relative").get<std::string>(), "PLAN.json");
 }
 
-TEST_F(PlannerToolsTest, BuildPlanSkipsAdversaryByDefault) {
+TEST_F(PlannerToolsTest, BuildPlanRunsAdversaryByDefault) {
     write_bridge_stub();
     write_text(workspace_root_ / "SPEC.md", "# Spec\n");
 
     PlannerBuildPlanTool tool;
     const auto result = tool.call(
         nlohmann::json{{"spec_path", "SPEC.md"}},
+        context_);
+
+    ASSERT_FALSE(result.is_error) << result.content;
+    const auto payload = nlohmann::json::parse(result.content);
+    EXPECT_FALSE(payload.at("spec_validation").at("adversary").at("skipped").get<bool>());
+    EXPECT_FALSE(payload.at("plan_validation").at("adversary").at("skipped").get<bool>());
+}
+
+TEST_F(PlannerToolsTest, BuildPlanCanSkipAdversaryWhenRequested) {
+    write_bridge_stub();
+    write_text(workspace_root_ / "SPEC.md", "# Spec\n");
+
+    PlannerBuildPlanTool tool;
+    const auto result = tool.call(
+        nlohmann::json{{"spec_path", "SPEC.md"}, {"skip_adversary", true}},
         context_);
 
     ASSERT_FALSE(result.is_error) << result.content;
@@ -298,6 +500,23 @@ TEST_F(PlannerToolsTest, BuildFromIdeaReturnsFailureBannerWhenSpecValidationFail
     EXPECT_FALSE(payload.at("spec_validation").at("passed").get<bool>());
 }
 
+TEST_F(PlannerToolsTest, BuildFromIdeaReturnsClarificationRequiredBanner) {
+    write_bridge_clarification_stub("build-from-idea");
+
+    PlannerBuildFromIdeaTool tool;
+    const auto result = tool.call(
+        nlohmann::json{{"idea", "Build a markdown link checker"}},
+        context_);
+
+    ASSERT_TRUE(result.is_error) << result.content;
+    EXPECT_NE(result.content.find("PLANNER_BUILD_FROM_IDEA STATUS: CLARIFICATION_REQUIRED"), std::string::npos);
+    EXPECT_NE(result.content.find("spec-clar-gap-001"), std::string::npos);
+
+    const auto payload = nlohmann::json::parse(raw_json_text(result.content));
+    EXPECT_TRUE(payload.at("clarification_required").get<bool>());
+    EXPECT_EQ(payload.at("pending_clarification_ids").size(), 1u);
+}
+
 TEST_F(PlannerToolsTest, ValidatePlanSkipsAdversaryByDefault) {
     write_bridge_stub();
     write_text(workspace_root_ / "SPEC.md", "# Spec\n");
@@ -313,6 +532,127 @@ TEST_F(PlannerToolsTest, ValidatePlanSkipsAdversaryByDefault) {
     ASSERT_FALSE(result.is_error) << result.content;
     const auto payload = nlohmann::json::parse(result.content);
     EXPECT_TRUE(payload.at("stage").at("adversary").at("skipped").get<bool>());
+}
+
+TEST_F(PlannerToolsTest, ValidateReviewUsesExternalBridgeFallbackAndInlineText) {
+    const fs::path external_repo_root = fs::temp_directory_path() / "omni_engine_external_planner_repo";
+    const fs::path external_workspace_parent = fs::temp_directory_path() / "omni_engine_external_review_workspace";
+    const fs::path external_workspace = external_workspace_parent / "confctl";
+    fs::remove_all(external_repo_root);
+    fs::remove_all(external_workspace_parent);
+    fs::create_directories(external_workspace);
+    write_external_bridge_stub(external_repo_root);
+    write_tracked_case(
+        external_repo_root,
+        "review",
+        "confctl_source_of_truth_case.json",
+        "{\"id\": \"confctl-source-of-truth\", \"kind\": \"review\"}\n");
+
+    ScopedEnvVar planner_bridge("OMNIAGENT_PLANNER_BRIDGE");
+    ScopedEnvVar planner_repo_root("OMNIAGENT_REPO_ROOT");
+    planner_bridge.unset();
+    planner_repo_root.set(external_repo_root.string());
+    fs::remove_all(workspace_root_ / "planner-harness");
+
+    ToolContext external_context = context_;
+    external_context.project_id = "confctl";
+    external_context.profile = "audit";
+    external_context.workspace_root = external_workspace;
+    external_context.working_dir = external_workspace;
+
+    PlannerValidateReviewTool tool;
+    const auto result = tool.call(
+        nlohmann::json{{"report_text", "Findings first\n\n- one issue\n"}},
+        external_context);
+
+    fs::remove_all(external_repo_root);
+    fs::remove_all(external_workspace_parent);
+
+    ASSERT_FALSE(result.is_error) << result.content;
+    const auto payload = nlohmann::json::parse(result.content);
+    EXPECT_EQ(payload.at("command").get<std::string>(), "validate-review");
+    EXPECT_EQ(payload.at("report_source").get<std::string>(), "inline_text");
+    EXPECT_NE(payload.at("case_path").get<std::string>().find("confctl_source_of_truth_case.json"), std::string::npos);
+    EXPECT_EQ(payload.at("report_path").get<std::string>(), "[inline report text]");
+}
+
+TEST_F(PlannerToolsTest, ValidateReviewFailureIncludesTrackedCaseRequirements) {
+    write_review_failure_bridge_stub();
+    write_text(
+        workspace_root_ / "planner-harness" / "tests" / "data" / "review" / "confctl_source_of_truth_case.json",
+        "{\n"
+        "  \"id\": \"confctl-source-of-truth-2026-04-08\",\n"
+        "  \"kind\": \"review\",\n"
+        "  \"baseline\": {\n"
+        "    \"required_terms\": [\"42 failed\", \"72 passed\"]\n"
+        "  },\n"
+        "  \"required_findings\": [\n"
+        "    {\n"
+        "      \"id\": \"schema-fields-root-contract\",\n"
+        "      \"cluster\": \"schema\",\n"
+        "      \"severity\": \"HIGH\",\n"
+        "      \"required_groups\": [[\"load_schema\", \"confctl/schema.py\"], [\"fields\", \"top-level yaml\"]]\n"
+        "    },\n"
+        "    {\n"
+        "      \"id\": \"store-schema-model-mismatch\",\n"
+        "      \"cluster\": \"store\",\n"
+        "      \"severity\": \"HIGH\",\n"
+        "      \"required_groups\": [[\"ConfigStore\", \"confctl/store.py\", \"_cast_value\"], [\"field.type\", \"value_type\", \"AttributeError\"]]\n"
+        "    }\n"
+        "  ],\n"
+        "  \"min_required_clusters\": 4\n"
+        "}\n");
+
+    PlannerValidateReviewTool tool;
+    const auto result = tool.call(
+        nlohmann::json{{"case_path", "planner-harness/tests/data/review/confctl_source_of_truth_case.json"},
+                       {"report_text", "High: only covered schema."},
+                       {"skip_adversary", true}},
+        context_);
+
+    ASSERT_TRUE(result.is_error) << result.content;
+    EXPECT_NE(result.content.find("PLANNER_VALIDATE_REVIEW STATUS: FAILED"), std::string::npos);
+    EXPECT_NE(result.content.find("tracked_case_requirements:"), std::string::npos);
+    EXPECT_NE(result.content.find("Baseline terms required"), std::string::npos);
+    EXPECT_NE(result.content.find("42 failed, 72 passed"), std::string::npos);
+    EXPECT_NE(result.content.find("Minimum distinct clusters required: 4"), std::string::npos);
+    EXPECT_NE(result.content.find("schema-fields-root-contract [HIGH/schema]"), std::string::npos);
+    EXPECT_NE(result.content.find("load_schema | confctl/schema.py; fields | top-level yaml"), std::string::npos);
+    EXPECT_NE(result.content.find("store-schema-model-mismatch [HIGH/store]"), std::string::npos);
+
+    const auto payload = nlohmann::json::parse(raw_json_text(result.content));
+    EXPECT_EQ(payload.at("command").get<std::string>(), "validate-review");
+    EXPECT_FALSE(payload.at("stage").at("passed").get<bool>());
+}
+
+TEST_F(PlannerToolsTest, ValidateBugfixAcceptsCaseIdAndInlineText) {
+    const fs::path external_repo_root = fs::temp_directory_path() / "omni_engine_external_bugfix_repo";
+    fs::remove_all(external_repo_root);
+    write_external_bridge_stub(external_repo_root);
+    write_tracked_case(
+        external_repo_root,
+        "bugfix",
+        "concurrent_submit_guard_case.json",
+        "{\"id\": \"concurrent-submit-guard\", \"kind\": \"bugfix\"}\n");
+
+    ScopedEnvVar planner_bridge("OMNIAGENT_PLANNER_BRIDGE");
+    ScopedEnvVar planner_repo_root("OMNIAGENT_REPO_ROOT");
+    planner_bridge.unset();
+    planner_repo_root.set(external_repo_root.string());
+    fs::remove_all(workspace_root_ / "planner-harness");
+
+    PlannerValidateBugfixTool tool;
+    const auto result = tool.call(
+        nlohmann::json{{"case_id", "concurrent_submit_guard_case"}, {"report_text", "Repro, root cause, fix, verification"}},
+        context_);
+
+    fs::remove_all(external_repo_root);
+
+    ASSERT_FALSE(result.is_error) << result.content;
+    const auto payload = nlohmann::json::parse(result.content);
+    EXPECT_EQ(payload.at("command").get<std::string>(), "validate-bugfix");
+    EXPECT_NE(payload.at("case_path").get<std::string>().find("concurrent_submit_guard_case.json"), std::string::npos);
+    EXPECT_EQ(payload.at("report_source").get<std::string>(), "inline_text");
 }
 
 TEST_F(PlannerToolsTest, RepairPlanReturnsOutputAndGraphValidation) {

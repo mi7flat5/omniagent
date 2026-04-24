@@ -56,70 +56,12 @@ std::unique_ptr<ProjectRun> ProjectSession::submit_turn(const std::string& input
             throw std::runtime_error("session already has an active run");
         }
         session_state->active_run = run_state;
-        session_state->session->set_tool_context(ToolContext{
-            .project_id = session_state->project_id,
-            .session_id = session_state->session_id,
-            .run_id = run_state->result.run_id,
-            .profile = session_state->active_profile,
-            .workspace_root = host_state->config.workspace.workspace_root,
-            .working_dir = session_state->working_dir,
-        });
+        bind_run_tool_context_locked(session_state, host_state, run_state);
     }
 
     dispatch_run_event(run_state, RunStartedEvent{run_state->result.run_id, session_state->active_profile, {}});
     persist_run_state(run_state);
-
-    try {
-        session_state->session->submit(input);
-
-        std::thread([session_state, run_state]() {
-            try {
-                session_state->session->wait();
-            } catch (const std::exception& error) {
-                {
-                    std::lock_guard<std::mutex> run_lock(run_state->mutex);
-                    if (!run_state->finalised) {
-                        run_state->result.error = error.what();
-                    }
-                }
-                finalize_run_state(run_state, RunStatus::Failed);
-                persist_run_state(run_state);
-                clear_active_run_if_matches(session_state, run_state);
-                mark_run_settled(run_state);
-                return;
-            }
-
-            bool should_emit_terminal = false;
-            RunStatus final_status = RunStatus::Completed;
-            {
-                std::lock_guard<std::mutex> run_lock(run_state->mutex);
-                should_emit_terminal = !run_state->finalised
-                    && (run_state->cancel_requested || run_state->stop_requested);
-            }
-
-            finalize_run_state(run_state, RunStatus::Completed);
-            persist_run_state(run_state);
-            {
-                std::lock_guard<std::mutex> run_lock(run_state->mutex);
-                final_status = run_state->result.status;
-            }
-            if (should_emit_terminal) {
-                if (final_status == RunStatus::Stopped) {
-                    dispatch_run_event(run_state, RunStoppedEvent{run_state->result.run_id, {}});
-                } else if (final_status == RunStatus::Cancelled) {
-                    dispatch_run_event(run_state, RunCancelledEvent{run_state->result.run_id, {}});
-                }
-            }
-            clear_active_run_if_matches(session_state, run_state);
-            mark_run_settled(run_state);
-        }).detach();
-    } catch (const std::exception& error) {
-        run_state->result.error = error.what();
-        finalize_run_state(run_state, RunStatus::Failed);
-        persist_run_state(run_state);
-        clear_active_run_if_matches(session_state, run_state);
-        mark_run_settled(run_state);
-    }
+    launch_run_execution(session_state, run_state, input);
 
     return std::unique_ptr<ProjectRun>(
         new ProjectRun(std::make_shared<ProjectRun::Impl>(run_state)));

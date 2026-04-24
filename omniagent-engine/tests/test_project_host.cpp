@@ -159,6 +159,16 @@ public:
     ToolCallResult call(const nlohmann::json&) override { return {"write", false}; }
 };
 
+class PHWriteFileTool : public Tool {
+public:
+    std::string name() const override { return "write_file"; }
+    std::string description() const override { return "Write file tool"; }
+    nlohmann::json input_schema() const override { return {}; }
+    bool is_read_only() const override { return false; }
+    bool is_destructive() const override { return false; }
+    ToolCallResult call(const nlohmann::json&) override { return {"write file", false}; }
+};
+
 class PHNetworkTool : public Tool {
 public:
     std::string name() const override { return "ph_network"; }
@@ -181,6 +191,28 @@ public:
     ToolCallResult call(const nlohmann::json&) override { return {"planner", false}; }
 };
 
+class PHPlannerValidateReviewTool : public Tool {
+public:
+    std::string name() const override { return "planner_validate_review"; }
+    std::string description() const override { return "Planner review validation tool"; }
+    nlohmann::json input_schema() const override { return {}; }
+    bool is_read_only() const override { return true; }
+    bool is_destructive() const override { return false; }
+    bool is_network() const override { return true; }
+    ToolCallResult call(const nlohmann::json&) override { return {"planner review", false}; }
+};
+
+class PHPlannerValidateBugfixTool : public Tool {
+public:
+    std::string name() const override { return "planner_validate_bugfix"; }
+    std::string description() const override { return "Planner bugfix validation tool"; }
+    nlohmann::json input_schema() const override { return {}; }
+    bool is_read_only() const override { return true; }
+    bool is_destructive() const override { return false; }
+    bool is_network() const override { return true; }
+    ToolCallResult call(const nlohmann::json&) override { return {"planner bugfix", false}; }
+};
+
 class PHPlannerRepairTool : public Tool {
 public:
     std::string name() const override { return "planner_repair_plan"; }
@@ -201,6 +233,49 @@ public:
     bool is_destructive() const override { return false; }
     bool is_network() const override { return true; }
     ToolCallResult call(const nlohmann::json&) override { return {"planner idea", false}; }
+};
+
+class PHPlannerClarificationTool : public Tool {
+public:
+    std::string name() const override { return "planner_build_plan"; }
+    std::string description() const override { return "Planner build tool requiring clarification"; }
+    nlohmann::json input_schema() const override { return {}; }
+    bool is_read_only() const override { return false; }
+    bool is_destructive() const override { return false; }
+    bool is_network() const override { return true; }
+    ToolCallResult call(const nlohmann::json&) override {
+        return {
+            "PLANNER_BUILD_PLAN STATUS: CLARIFICATION_REQUIRED\n"
+            "workflow_passed: false\n"
+            "clarification_required: true\n"
+            "questions:\n"
+            "- spec-clar-gap-001: Should queues be tenant scoped?\n"
+            "raw_json:\n"
+            "{\n"
+            "  \"command\": \"run\",\n"
+            "  \"clarification_required\": true,\n"
+            "  \"clarification\": {\n"
+            "    \"clarification_required\": true,\n"
+            "    \"clarification_mode\": \"required\",\n"
+            "    \"clarification_message\": \"Need one blocker resolved\",\n"
+            "    \"pending_clarification_ids\": [\"spec-clar-gap-001\"],\n"
+            "    \"clarifications\": [\n"
+            "      {\n"
+            "        \"id\": \"spec-clar-gap-001\",\n"
+            "        \"stage\": \"spec\",\n"
+            "        \"severity\": \"BLOCKING\",\n"
+            "        \"quote\": \"Tenant isolation is not specified\",\n"
+            "        \"question\": \"Should queues be tenant scoped?\",\n"
+            "        \"recommended_default\": \"Enforce tenant_id at dequeue\",\n"
+            "        \"answer_type\": \"text\",\n"
+            "        \"options\": []\n"
+            "      }\n"
+            "    ]\n"
+            "  }\n"
+            "}",
+            true,
+        };
+    }
 };
 
 class PHToolTurnProvider : public LLMProvider {
@@ -274,6 +349,101 @@ private:
     int call_count_ = 0;
 };
 
+class PHClarificationProvider : public LLMProvider {
+public:
+    Usage complete(const CompletionRequest&, StreamCallback cb,
+                   std::atomic<bool>& stop_flag) override {
+        if (stop_flag.load(std::memory_order_relaxed)) {
+            return {};
+        }
+
+        StreamEventData event;
+        event.type = StreamEventType::MessageStart;
+        cb(event);
+
+        if (call_count_++ == 0) {
+            event = {};
+            event.type = StreamEventType::ContentBlockStart;
+            event.index = 0;
+            event.delta_type = "tool_use";
+            event.tool_id = "tool-clar-1";
+            event.tool_name = "planner_build_plan";
+            cb(event);
+
+            event = {};
+            event.type = StreamEventType::ContentBlockStop;
+            event.index = 0;
+            event.tool_input = nlohmann::json::object();
+            cb(event);
+
+            event = {};
+            event.type = StreamEventType::MessageDelta;
+            event.stop_reason = "tool_use";
+            event.usage = {1, 1, 0};
+            cb(event);
+        } else if (call_count_ == 2) {
+            event = {};
+            event.type = StreamEventType::ContentBlockStart;
+            event.index = 0;
+            event.delta_type = "text";
+            cb(event);
+
+            event = {};
+            event.type = StreamEventType::ContentBlockDelta;
+            event.index = 0;
+            event.delta_type = "text_delta";
+            event.delta_text = "Need clarification before I can continue.";
+            cb(event);
+
+            event = {};
+            event.type = StreamEventType::ContentBlockStop;
+            event.index = 0;
+            cb(event);
+
+            event = {};
+            event.type = StreamEventType::MessageDelta;
+            event.stop_reason = "end_turn";
+            event.usage = {1, 1, 0};
+            cb(event);
+        } else {
+            event = {};
+            event.type = StreamEventType::ContentBlockStart;
+            event.index = 0;
+            event.delta_type = "text";
+            cb(event);
+
+            event = {};
+            event.type = StreamEventType::ContentBlockDelta;
+            event.index = 0;
+            event.delta_type = "text_delta";
+            event.delta_text = "Clarification applied. Planning can continue.";
+            cb(event);
+
+            event = {};
+            event.type = StreamEventType::ContentBlockStop;
+            event.index = 0;
+            cb(event);
+
+            event = {};
+            event.type = StreamEventType::MessageDelta;
+            event.stop_reason = "end_turn";
+            event.usage = {1, 1, 0};
+            cb(event);
+        }
+
+        event = {};
+        event.type = StreamEventType::MessageStop;
+        cb(event);
+        return {1, 1, 0};
+    }
+
+    ModelCapabilities capabilities() const override { return {}; }
+    std::string name() const override { return "clarification-provider"; }
+
+private:
+    int call_count_ = 0;
+};
+
 class PHPauseApprove : public ApprovalDelegate {
 public:
     ApprovalDecision on_approval_requested(const std::string& tool_name,
@@ -338,6 +508,19 @@ ProjectRuntimeConfig make_pause_config(const fs::path& workspace_root,
     });
     config.provider_factory = []() {
         return std::make_unique<PHToolTurnProvider>();
+    };
+    return config;
+}
+
+ProjectRuntimeConfig make_clarification_config(const fs::path& workspace_root,
+                                               const fs::path& storage_dir) {
+    ProjectRuntimeConfig config;
+    config.workspace.project_id = "demo-project";
+    config.workspace.workspace_root = workspace_root;
+    config.workspace.working_dir = workspace_root;
+    config.engine.session_storage_dir = storage_dir;
+    config.provider_factory = []() {
+        return std::make_unique<PHClarificationProvider>();
     };
     return config;
 }
@@ -559,11 +742,105 @@ TEST_F(ProjectHostTest, SystemPromptIncludesProjectWorkspaceIdentity) {
     EXPECT_NE(prompt.find("Workspace root: " + root_dir_.string()), std::string::npos);
     EXPECT_NE(prompt.find("Current working directory: " + (root_dir_ / "subdir").string()), std::string::npos);
     EXPECT_NE(prompt.find("Active profile: bugfix"), std::string::npos);
+    EXPECT_NE(prompt.find("Default to concise, task-focused responses."), std::string::npos);
+    EXPECT_NE(prompt.find("Do not introduce yourself, restate your role, or narrate routine background work"),
+              std::string::npos);
     EXPECT_NE(prompt.find("Do not claim that you lack a filesystem"), std::string::npos);
     EXPECT_NE(prompt.find("Do not assume the omniagent repository is relevant unless it is the selected workspace."),
               std::string::npos);
-    EXPECT_NE(prompt.find("Fix the problem directly, using edits and commands when necessary."),
-              std::string::npos);
+    EXPECT_NE(prompt.find("root cause"), std::string::npos);
+    EXPECT_NE(prompt.find("smallest defensible fix"), std::string::npos);
+}
+
+TEST_F(ProjectHostTest, CoordinatorConversationalTurnsCompleteWithoutDelegation) {
+    auto host = ProjectEngineHost::create(make_config(root_dir_, storage_dir_, provider_state_));
+
+    PHAutoApprove approvals;
+    PHRunObserver observer;
+
+    auto session = host->open_session(SessionOptions{
+        .profile = "coordinator",
+        .session_id = std::nullopt,
+        .working_dir_override = std::nullopt,
+    });
+    provider_state_->text = "GitHub Copilot.";
+    auto run = session->submit_turn("what is you rname", observer, approvals);
+    run->wait();
+
+    const auto result = run->result();
+    EXPECT_EQ(result.status, RunStatus::Completed);
+    ASSERT_EQ(provider_state_->seen_tool_names.size(), 1u);
+    EXPECT_TRUE(provider_state_->seen_tool_names.back().empty());
+    ASSERT_EQ(provider_state_->seen_system_prompts.size(), 1u);
+
+    const auto snapshot = session->snapshot();
+    ASSERT_EQ(snapshot.messages.size(), 2u);
+    const auto& assistant = snapshot.messages.back();
+    ASSERT_EQ(assistant.role, Role::Assistant);
+    ASSERT_EQ(assistant.content.size(), 1u);
+    const auto* text = std::get_if<TextContent>(&assistant.content.front().data);
+    ASSERT_NE(text, nullptr);
+    EXPECT_EQ(text->text, "GitHub Copilot.");
+
+    bool saw_tool = false;
+    bool saw_agent = false;
+    bool saw_text = false;
+    for (const auto& event : observer.events) {
+        saw_tool = saw_tool || std::holds_alternative<ToolUseStartEvent>(event);
+        saw_agent = saw_agent || std::holds_alternative<AgentSpawnedEvent>(event)
+            || std::holds_alternative<AgentCompletedEvent>(event);
+        if (const auto* delta = std::get_if<TextDeltaEvent>(&event)) {
+            saw_text = saw_text || delta->text == "GitHub Copilot.";
+        }
+    }
+    EXPECT_FALSE(saw_tool);
+    EXPECT_FALSE(saw_agent);
+    EXPECT_TRUE(saw_text);
+}
+
+TEST_F(ProjectHostTest, CoordinatorAuditTurnsUseAuditProfileDirectly) {
+    auto host = ProjectEngineHost::create(make_config(root_dir_, storage_dir_, provider_state_));
+    host->register_tool(std::make_unique<PHReadTool>());
+    host->register_tool(std::make_unique<PHWriteTool>());
+
+    PHAutoApprove approvals;
+    PHRunObserver observer;
+
+    auto session = host->open_session(SessionOptions{
+        .profile = "coordinator",
+        .session_id = std::nullopt,
+        .working_dir_override = std::nullopt,
+    });
+    provider_state_->text = "No findings.";
+    auto run = session->submit_turn("can you do a code audit for me?", observer, approvals);
+    run->wait();
+
+    const auto result = run->result();
+    EXPECT_EQ(result.status, RunStatus::Completed);
+    EXPECT_EQ(result.profile, "audit");
+    ASSERT_FALSE(provider_state_->seen_tool_names.empty());
+    const auto audit_request = std::find_if(
+        provider_state_->seen_tool_names.rbegin(),
+        provider_state_->seen_tool_names.rend(),
+        [](const std::vector<std::string>& names) {
+            return std::find(names.begin(), names.end(), "ph_read") != names.end();
+        });
+    ASSERT_NE(audit_request, provider_state_->seen_tool_names.rend());
+    const auto& tool_names = *audit_request;
+    EXPECT_NE(std::find(tool_names.begin(), tool_names.end(), "ph_read"), tool_names.end());
+    EXPECT_EQ(std::find(tool_names.begin(), tool_names.end(), "ph_write"), tool_names.end());
+    EXPECT_EQ(std::find(tool_names.begin(), tool_names.end(), "agent"), tool_names.end());
+    EXPECT_EQ(std::find(tool_names.begin(), tool_names.end(), "send_message"), tool_names.end());
+
+    ASSERT_FALSE(provider_state_->seen_system_prompts.empty());
+    EXPECT_NE(provider_state_->seen_system_prompts.back().find("Active profile: audit"), std::string::npos);
+
+    bool saw_agent = false;
+    for (const auto& event : observer.events) {
+        saw_agent = saw_agent || std::holds_alternative<AgentSpawnedEvent>(event)
+            || std::holds_alternative<AgentCompletedEvent>(event);
+    }
+    EXPECT_FALSE(saw_agent);
 }
 
 TEST_F(ProjectHostTest, RunCancelAndStopUpdateStatus) {
@@ -648,6 +925,11 @@ TEST_F(ProjectHostTest, ProfileFilteringChangesVisibleTools) {
     auto host = ProjectEngineHost::create(make_config(root_dir_, storage_dir_, provider_state_));
     host->register_tool(std::make_unique<PHReadTool>());
     host->register_tool(std::make_unique<PHWriteTool>());
+    host->register_tool(std::make_unique<PHWriteFileTool>());
+    host->register_tool(std::make_unique<PHNetworkTool>());
+    host->register_tool(std::make_unique<PHPlannerBuildTool>());
+    host->register_tool(std::make_unique<PHPlannerValidateReviewTool>());
+    host->register_tool(std::make_unique<PHPlannerValidateBugfixTool>());
 
     PHAutoApprove approvals;
     PHRunObserver observer;
@@ -662,6 +944,51 @@ TEST_F(ProjectHostTest, ProfileFilteringChangesVisibleTools) {
     const auto explore_tools = provider_state_->seen_tool_names.back();
     EXPECT_NE(std::find(explore_tools.begin(), explore_tools.end(), "ph_read"), explore_tools.end());
     EXPECT_EQ(std::find(explore_tools.begin(), explore_tools.end(), "ph_write"), explore_tools.end());
+    EXPECT_EQ(std::find(explore_tools.begin(), explore_tools.end(), "write_file"), explore_tools.end());
+    EXPECT_EQ(std::find(explore_tools.begin(), explore_tools.end(), "ph_network"), explore_tools.end());
+    EXPECT_EQ(std::find(explore_tools.begin(), explore_tools.end(), "planner_build_plan"), explore_tools.end());
+    EXPECT_EQ(std::find(explore_tools.begin(), explore_tools.end(), "planner_validate_review"), explore_tools.end());
+    EXPECT_EQ(std::find(explore_tools.begin(), explore_tools.end(), "planner_validate_bugfix"), explore_tools.end());
+
+    session->set_profile("audit");
+    auto audit_run = session->submit_turn("audit tools", observer, approvals);
+    audit_run->wait();
+
+    ASSERT_GE(provider_state_->seen_tool_names.size(), 3u);
+    const auto& audit_tools = provider_state_->seen_tool_names[provider_state_->seen_tool_names.size() - 2];
+    EXPECT_NE(std::find(audit_tools.begin(), audit_tools.end(), "ph_read"), audit_tools.end());
+    EXPECT_EQ(std::find(audit_tools.begin(), audit_tools.end(), "ph_write"), audit_tools.end());
+    EXPECT_EQ(std::find(audit_tools.begin(), audit_tools.end(), "write_file"), audit_tools.end());
+    EXPECT_EQ(std::find(audit_tools.begin(), audit_tools.end(), "ph_network"), audit_tools.end());
+    EXPECT_EQ(std::find(audit_tools.begin(), audit_tools.end(), "planner_build_plan"), audit_tools.end());
+    EXPECT_NE(std::find(audit_tools.begin(), audit_tools.end(), "planner_validate_review"), audit_tools.end());
+    EXPECT_EQ(std::find(audit_tools.begin(), audit_tools.end(), "planner_validate_bugfix"), audit_tools.end());
+
+    session->set_profile("feature");
+    auto feature_run = session->submit_turn("feature tools", observer, approvals);
+    feature_run->wait();
+
+    const auto feature_tools = provider_state_->seen_tool_names.back();
+    EXPECT_NE(std::find(feature_tools.begin(), feature_tools.end(), "ph_read"), feature_tools.end());
+    EXPECT_EQ(std::find(feature_tools.begin(), feature_tools.end(), "ph_write"), feature_tools.end());
+    EXPECT_NE(std::find(feature_tools.begin(), feature_tools.end(), "write_file"), feature_tools.end());
+    EXPECT_EQ(std::find(feature_tools.begin(), feature_tools.end(), "ph_network"), feature_tools.end());
+    EXPECT_NE(std::find(feature_tools.begin(), feature_tools.end(), "planner_build_plan"), feature_tools.end());
+    EXPECT_EQ(std::find(feature_tools.begin(), feature_tools.end(), "planner_validate_review"), feature_tools.end());
+    EXPECT_EQ(std::find(feature_tools.begin(), feature_tools.end(), "planner_validate_bugfix"), feature_tools.end());
+
+    session->set_profile("refactor");
+    auto refactor_run = session->submit_turn("refactor tools", observer, approvals);
+    refactor_run->wait();
+
+    const auto refactor_tools = provider_state_->seen_tool_names.back();
+    EXPECT_NE(std::find(refactor_tools.begin(), refactor_tools.end(), "ph_read"), refactor_tools.end());
+    EXPECT_EQ(std::find(refactor_tools.begin(), refactor_tools.end(), "ph_write"), refactor_tools.end());
+    EXPECT_NE(std::find(refactor_tools.begin(), refactor_tools.end(), "write_file"), refactor_tools.end());
+    EXPECT_EQ(std::find(refactor_tools.begin(), refactor_tools.end(), "ph_network"), refactor_tools.end());
+    EXPECT_NE(std::find(refactor_tools.begin(), refactor_tools.end(), "planner_build_plan"), refactor_tools.end());
+    EXPECT_EQ(std::find(refactor_tools.begin(), refactor_tools.end(), "planner_validate_review"), refactor_tools.end());
+    EXPECT_EQ(std::find(refactor_tools.begin(), refactor_tools.end(), "planner_validate_bugfix"), refactor_tools.end());
 
     session->set_profile("bugfix");
     auto bugfix_run = session->submit_turn("tools again", observer, approvals);
@@ -669,7 +996,12 @@ TEST_F(ProjectHostTest, ProfileFilteringChangesVisibleTools) {
 
     const auto bugfix_tools = provider_state_->seen_tool_names.back();
     EXPECT_NE(std::find(bugfix_tools.begin(), bugfix_tools.end(), "ph_read"), bugfix_tools.end());
-    EXPECT_NE(std::find(bugfix_tools.begin(), bugfix_tools.end(), "ph_write"), bugfix_tools.end());
+    EXPECT_EQ(std::find(bugfix_tools.begin(), bugfix_tools.end(), "ph_write"), bugfix_tools.end());
+    EXPECT_NE(std::find(bugfix_tools.begin(), bugfix_tools.end(), "write_file"), bugfix_tools.end());
+    EXPECT_EQ(std::find(bugfix_tools.begin(), bugfix_tools.end(), "ph_network"), bugfix_tools.end());
+    EXPECT_EQ(std::find(bugfix_tools.begin(), bugfix_tools.end(), "planner_build_plan"), bugfix_tools.end());
+    EXPECT_EQ(std::find(bugfix_tools.begin(), bugfix_tools.end(), "planner_validate_review"), bugfix_tools.end());
+    EXPECT_NE(std::find(bugfix_tools.begin(), bugfix_tools.end(), "planner_validate_bugfix"), bugfix_tools.end());
 }
 
 TEST_F(ProjectHostTest, CoordinatorProfileOnlyExposesDelegationTools) {
@@ -787,6 +1119,74 @@ TEST_F(ProjectHostTest, PausedApprovalCanBeResumedByRunId) {
     const auto result = run->result();
     EXPECT_EQ(result.status, RunStatus::Completed);
     EXPECT_EQ(result.output, "after approval");
+}
+
+TEST_F(ProjectHostTest, PlannerClarificationPersistsAsPausedRunState) {
+    auto host = ProjectEngineHost::create(make_clarification_config(root_dir_, storage_dir_));
+    host->register_tool(std::make_unique<PHPlannerClarificationTool>());
+
+    PHAutoApprove approvals;
+    PHRunObserver observer;
+
+    auto session = host->open_session();
+    auto run = session->submit_turn("build plan", observer, approvals);
+    run->wait();
+
+    const auto result = run->result();
+    EXPECT_EQ(result.status, RunStatus::Paused);
+    ASSERT_TRUE(result.pending_clarification.has_value());
+    EXPECT_EQ(result.pause_reason, std::optional<std::string>{"clarification_required"});
+    EXPECT_EQ(result.pending_clarification->tool_name, "planner_build_plan");
+    EXPECT_EQ(result.pending_clarification->clarification_mode, "required");
+    ASSERT_EQ(result.pending_clarification->questions.size(), 1u);
+    EXPECT_EQ(result.pending_clarification->questions[0].id, "spec-clar-gap-001");
+
+    auto loaded = host->get_run(run->run_id());
+    ASSERT_TRUE(loaded.has_value());
+    EXPECT_EQ(loaded->status, RunStatus::Paused);
+    ASSERT_TRUE(loaded->pending_clarification.has_value());
+    EXPECT_EQ(loaded->pending_clarification->questions[0].question,
+              "Should queues be tenant scoped?");
+
+    EXPECT_TRUE(std::any_of(observer.events.begin(), observer.events.end(), [](const Event& event) {
+        return std::holds_alternative<ClarificationRequestedEvent>(event);
+    }));
+    EXPECT_TRUE(std::any_of(observer.events.begin(), observer.events.end(), [](const Event& event) {
+        if (const auto* paused = std::get_if<RunPausedEvent>(&event)) {
+            return paused->reason == "clarification_required";
+        }
+        return false;
+    }));
+}
+
+TEST_F(ProjectHostTest, ClarificationPausedRunCanBeResumedByRunId) {
+    auto host = ProjectEngineHost::create(make_clarification_config(root_dir_, storage_dir_));
+    host->register_tool(std::make_unique<PHPlannerClarificationTool>());
+
+    PHAutoApprove approvals;
+    PHRunObserver observer;
+
+    auto session = host->open_session();
+    auto run = session->submit_turn("build plan", observer, approvals);
+    run->wait();
+
+    ASSERT_EQ(run->result().status, RunStatus::Paused);
+    ASSERT_EQ(session->snapshot().active_run_id, std::optional<std::string>{run->run_id()});
+    EXPECT_THROW(session->submit_turn("another turn", observer, approvals), std::runtime_error);
+
+    ASSERT_TRUE(host->resume_run(run->run_id(), "Queues must be tenant scoped."));
+    run->wait();
+
+    const auto result = run->result();
+    EXPECT_EQ(result.status, RunStatus::Completed);
+    EXPECT_FALSE(result.pending_clarification.has_value());
+    EXPECT_FALSE(result.pause_reason.has_value());
+    EXPECT_NE(result.output.find("Clarification applied. Planning can continue."), std::string::npos);
+    EXPECT_EQ(session->snapshot().active_run_id, std::nullopt);
+
+    EXPECT_TRUE(std::any_of(observer.events.begin(), observer.events.end(), [](const Event& event) {
+        return std::holds_alternative<RunResumedEvent>(event);
+    }));
 }
 
 TEST_F(ProjectHostTest, RunsPersistAndCanBeDeleted) {

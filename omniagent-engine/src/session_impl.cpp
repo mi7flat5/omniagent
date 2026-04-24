@@ -112,10 +112,16 @@ void Session::wait() {
 }
 
 void Session::cancel() {
+    if (impl_->agent_manager) {
+        impl_->agent_manager->cancel_all_running();
+    }
     impl_->query_engine->cancel();
 }
 
 void Session::stop() {
+    if (impl_->agent_manager) {
+        impl_->agent_manager->stop_all_running();
+    }
     impl_->query_engine->request_stop();
 }
 
@@ -188,6 +194,10 @@ void Session::set_system_prompt(std::string system_prompt) {
 
 void Session::set_permission_mode(PermissionMode mode) {
     impl_->checker->set_mode(mode);
+}
+
+void Session::set_evidence_based_final_answer(bool enabled) {
+    impl_->query_engine->set_evidence_based_final_answer(enabled);
 }
 
 void Session::set_max_parallel_tools(int max_parallel_tools) {

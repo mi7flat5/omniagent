@@ -986,6 +986,8 @@ std::vector<std::unique_ptr<Tool>> make_default_workspace_tools() {
     tools.push_back(std::make_unique<WebSearchTool>());
     tools.push_back(std::make_unique<PlannerValidateSpecTool>());
     tools.push_back(std::make_unique<PlannerValidatePlanTool>());
+    tools.push_back(std::make_unique<PlannerValidateReviewTool>());
+    tools.push_back(std::make_unique<PlannerValidateBugfixTool>());
     tools.push_back(std::make_unique<PlannerRepairPlanTool>());
     tools.push_back(std::make_unique<PlannerBuildPlanTool>());
     tools.push_back(std::make_unique<PlannerBuildFromIdeaTool>());

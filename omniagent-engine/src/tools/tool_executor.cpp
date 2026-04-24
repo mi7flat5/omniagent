@@ -66,6 +66,13 @@ static Tool* lookup_tool(ToolRegistry& engine_reg, ToolRegistry* session_reg,
     return engine_reg.get(name);
 }
 
+static bool should_preserve_planner_clarification_result(const std::string& tool_name,
+                                                         const std::string& content) {
+    return tool_name.rfind("planner_", 0) == 0
+        && content.find("STATUS: CLARIFICATION_REQUIRED") != std::string::npos
+        && content.find("raw_json:\n") != std::string::npos;
+}
+
 // ---------------------------------------------------------------------------
 // truncate_result
 // ---------------------------------------------------------------------------
@@ -173,7 +180,11 @@ ToolResult ToolExecutor::execute_one(const ToolUseContent& call,
     }
 
     const PermissionDecision decision =
-        checker_.check(call.name, call.input, tool->description());
+        checker_.check(call.name,
+                       call.input,
+                       tool->description(),
+                       tool->is_read_only(),
+                       tool->is_destructive());
 
     if (decision == PermissionDecision::Deny) {
         ToolResult err;
@@ -189,7 +200,9 @@ ToolResult ToolExecutor::execute_one(const ToolUseContent& call,
 
     ToolResult tr;
     tr.tool_use_id = call.id;
-    tr.content     = truncate_result(call_result.content);
+    tr.content     = should_preserve_planner_clarification_result(call.name, call_result.content)
+        ? call_result.content
+        : truncate_result(call_result.content);
     tr.is_error    = call_result.is_error;
 
     // ToolUseEnd hook — informational, result not blocking.

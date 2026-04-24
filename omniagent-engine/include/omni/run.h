@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace omni::engine {
 
@@ -23,6 +24,27 @@ struct PendingApproval {
     std::string tool_name;
     nlohmann::json args;
     std::string description;
+    std::chrono::system_clock::time_point requested_at{};
+};
+
+struct ClarificationQuestion {
+    std::string id;
+    std::string stage;
+    std::string severity;
+    std::string quote;
+    std::string question;
+    std::string recommended_default;
+    std::string answer_type;
+    nlohmann::json options = nlohmann::json::array();
+};
+
+struct PendingClarification {
+    std::string tool_name;
+    std::string clarification_mode;
+    std::string clarification_message;
+    std::vector<std::string> pending_question_ids;
+    std::vector<ClarificationQuestion> questions;
+    nlohmann::json raw_payload = nlohmann::json::object();
     std::chrono::system_clock::time_point requested_at{};
 };
 
@@ -48,6 +70,7 @@ struct RunResult {
     std::optional<std::string> error;
     std::optional<std::string> pause_reason;
     std::optional<PendingApproval> pending_approval;
+    std::optional<PendingClarification> pending_clarification;
     std::chrono::system_clock::time_point started_at{};
     std::chrono::system_clock::time_point finished_at{};
 };
